@@ -42,8 +42,18 @@ async function cargarTrades() {
   });
 }
 
-cargarTrades();
+async function cargarTrades() {
+  const res = await fetch(API_URL);
+  const data = await res.json();
 
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("service-worker.js");
+  const hoy = new Date().toISOString().split("T")[0];
+
+  list.innerHTML = "";
+  data
+    .filter(t => t.fecha === hoy)
+    .forEach(t => {
+      const li = document.createElement("li");
+      li.textContent = `${t.hora} | ${t.ticker} | ${t.estrategia} | ${t.sesgo} | $${t.resultado}`;
+      list.appendChild(li);
+    });
 }
