@@ -11,6 +11,7 @@ form.addEventListener("submit", async (e) => {
     hora: hora.value,
     ticker: ticker.value.toUpperCase(),
     estrategia: estrategia.value,
+    sesgo: sesgo.value,
     tipo: tipo.value,
     expiracion: expiracion.value,
     strikes: strikes.value,
