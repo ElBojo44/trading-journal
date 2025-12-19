@@ -1,4 +1,4 @@
-const API_URL = "TU_URL_AQUI";
+const API_URL = "https://script.google.com/macros/s/AKfycbxBeUlT5vdKTnyNak5KrrWKchgSKbi8PtgljjDd5eL8yMdAdluZv-JGpkNKt6wjHcl3/exec";
 
 const form = document.getElementById("tradeForm");
 const list = document.getElementById("tradesList");
@@ -42,3 +42,7 @@ async function cargarTrades() {
 }
 
 cargarTrades();
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js");
+}
