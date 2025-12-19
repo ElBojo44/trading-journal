@@ -12,8 +12,14 @@
   <h1>📒 Trading Journal</h1>
 
   <form id="tradeForm">
-    <input type="date" id="fecha" required />
-    <input type="time" id="hora" required />
+    <div class="field">
+      <input type="date" id="fecha" required />
+      <label for="fecha">Fecha</label>
+    </div>
+    <div class="field">
+      <input type="time" id="hora" required />
+      <label for="hora">Hora</label>
+    </div>
     <input type="text" id="ticker" placeholder="Ticker" required />
 
     <select id="estrategia" required>
