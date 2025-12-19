@@ -1,4 +1,4 @@
-const API_URL = "https://script.google.com/macros/s/AKfycbxBeUlT5vdKTnyNak5KrrWKchgSKbi8PtgljjDd5eL8yMdAdluZv-JGpkNKt6wjHcl3/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbwIkegEZj9eeBfiZMyYaCOAQlAr_R24Tm0tDOmpTkuwVChjZtjIlIEuARRwoURqydb8/exec";
 
 const form = document.getElementById("tradeForm");
 const list = document.getElementById("tradesList");
