@@ -39,3 +39,65 @@ li {
   padding: 8px;
   border-bottom: 1px solid #ddd;
 }
+
+.field {
+  position: relative;
+}
+
+.field input {
+  width: 100%;
+  padding: 14px 10px;
+  font-size: 16px;
+}
+
+.field label {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #999;
+  font-size: 14px;
+  pointer-events: none;
+  transition: 0.2s ease;
+  background: white;
+  padding: 0 4px;
+}
+
+/* Cuando hay valor o foco */
+.field input:focus + label,
+.field input:not(:placeholder-shown) + label,
+.field input:valid + label {
+  top: -6px;
+  font-size: 12px;
+  color: #333;
+}
+
+.pnl {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px;
+  border-radius: 10px;
+  margin-bottom: 15px;
+  font-size: 18px;
+}
+
+.pnl.neutral {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.pnl.positive {
+  background: #e6f7ed;
+  color: #0f8a3d;
+}
+
+.pnl.negative {
+  background: #fdecea;
+  color: #b00020;
+}
+
+li.editing {
+  background: #222;
+  color: #fff;
+}
