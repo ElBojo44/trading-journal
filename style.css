@@ -15,7 +15,8 @@ form {
 }
 
 input, select, button {
-  padding: 8px;
+  width: 100%;
+  padding: 10px;
   font-size: 16px;
 }
 
@@ -30,46 +31,26 @@ button:hover {
   opacity: 0.85;
 }
 
+#cancelBtn {
+  background: #ccc;
+  color: #111;
+}
+
 ul {
   list-style: none;
   padding: 0;
 }
 
 li {
-  padding: 8px;
+  padding: 10px;
+  margin-bottom: 6px;
   border-bottom: 1px solid #ddd;
 }
 
-.field {
-  position: relative;
-}
-
-.field input {
-  width: 100%;
-  padding: 14px 10px;
-  font-size: 16px;
-}
-
-.field label {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #999;
-  font-size: 14px;
-  pointer-events: none;
-  transition: 0.2s ease;
-  background: white;
-  padding: 0 4px;
-}
-
-/* Cuando hay valor o foco */
-.field input:focus + label,
-.field input:not(:placeholder-shown) + label,
-.field input:valid + label {
-  top: -6px;
-  font-size: 12px;
-  color: #333;
+#tradesList li.editing {
+  background: #222;
+  color: #fff;
+  border-radius: 8px;
 }
 
 .pnl {
@@ -97,7 +78,26 @@ li {
   color: #b00020;
 }
 
-li.editing {
-  background: #222;
-  color: #fff;
+.btnRow {
+  display: flex;
+  gap: 10px;
 }
+
+.btnRow button {
+  flex: 1;
+}
+
+.rowBtns{
+  display:flex;
+  gap:8px;
+  margin-top:8px;
+}
+
+.rowBtns button{
+  padding:8px;
+  font-size:14px;
+  border-radius:8px;
+}
+
+.row1{ font-size:15px; }
+.row2{ font-size:13px; opacity:0.85; margin-top:4px; }
