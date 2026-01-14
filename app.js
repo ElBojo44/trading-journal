@@ -23,8 +23,8 @@ const resultado = document.getElementById("resultado");
 const notas = document.getElementById("notas");
 
 const estado = document.getElementById("estado");
-const saveBtn = document.getElementById("saveBtn");     // ojo: tu HTML tiene saveBtn
-const cancelBtn = document.getElementById("cancelBtn"); // ojo: tu HTML tiene cancelBtn
+const saveBtn = document.getElementById("saveBtn");
+const cancelBtn = document.getElementById("cancelBtn");
 
 // ---------- helpers ----------
 function todayLocalISO() {
@@ -50,6 +50,7 @@ function setHoraAhora() {
 function normalizarFecha(f) {
   if (!f) return null;
 
+  // si viene tipo "2026-01-14T..."
   if (typeof f === "string" && f.includes("-")) {
     return f.split("T")[0];
   }
@@ -67,6 +68,44 @@ function salirModoEdicion() {
   editRow = null;
   if (saveBtn) saveBtn.textContent = "Guardar Trade";
   document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
+}
+
+function setStatus(msg) {
+  // si luego quieres un div de estado, lo enchufamos aquí
+  // por ahora usamos console + alert suave
+  console.log(msg);
+}
+
+// ---------- API helpers ----------
+async function apiPost(payload) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }, // ✅ CRÍTICO
+    body: JSON.stringify(payload),
+  });
+
+  // Apps Script a veces responde 200 aunque sea error lógico,
+  // por eso leemos JSON siempre.
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    const text = await res.text();
+    throw new Error(`Respuesta no-JSON: ${text}`);
+  }
+
+  if (!res.ok || data?.ok === false) {
+    const msg = data?.error || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  return data;
+}
+
+async function apiGet() {
+  const res = await fetch(API_URL, { method: "GET" });
+  if (!res.ok) throw new Error(`GET falló: HTTP ${res.status}`);
+  return res.json();
 }
 
 // ---------- submit ----------
@@ -93,19 +132,23 @@ form.addEventListener("submit", async (e) => {
     estado: estValue,
     cierre_fecha: cierre,
 
-    _row: editRow
+    _row: editRow,
   };
 
-  await fetch(API_URL, {
-    method: "POST",
-    body: JSON.stringify(trade)
-  });
+  try {
+    setStatus("Guardando trade...");
+    await apiPost(trade);
 
-  salirModoEdicion();
-  form.reset();
-  setFechaHoy();
-  setHoraAhora();
-  cargarTrades();
+    salirModoEdicion();
+    form.reset();
+    setFechaHoy();
+    setHoraAhora();
+    await cargarTrades();
+    setStatus("Trade guardado ✅");
+  } catch (err) {
+    console.error(err);
+    alert(`No se pudo guardar: ${err.message}`);
+  }
 });
 
 // Cancelar edición
@@ -118,104 +161,115 @@ cancelBtn?.addEventListener("click", () => {
 
 // ---------- cargar trades + PnL ----------
 async function cargarTrades() {
-  const res = await fetch(API_URL);
-  const data = await res.json();
+  try {
+    const data = await apiGet();
 
-  const hoy = todayLocalISO();
-  list.innerHTML = "";
+    const hoy = todayLocalISO();
+    list.innerHTML = "";
+    let pnlHoy = 0;
 
-  let pnlHoy = 0;
+    data.forEach((t) => {
+      if (!t.fecha) return;
 
-  data.forEach((t) => {
-    if (!t.fecha) return;
+      const fechaTrade = normalizarFecha(t.fecha);
+      if (!fechaTrade) return;
 
-    const fechaTrade = normalizarFecha(t.fecha);
-    if (!fechaTrade) return;
+      const est = (t.estado || "OPEN").toUpperCase();
+      if (est === "DELETED") return;
 
-    const est = (t.estado || "OPEN").toUpperCase();
-    if (est === "DELETED") return; // soft delete
+      // Solo trades de hoy (si quieres ver todos, comenta esto)
+      if (fechaTrade !== hoy) return;
 
-    // Solo trades de hoy
-    if (fechaTrade !== hoy) return;
+      const resultadoNum = parseFloat(t.resultado) || 0;
+      if (est === "CLOSED") pnlHoy += resultadoNum;
 
-    const resultadoNum = parseFloat(t.resultado) || 0;
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <div class="row1">
+          <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""} (${t.sesgo || ""}) — <b>${est}</b>
+        </div>
+        <div class="row2">
+          ${fechaTrade} ${t.hora || ""} | $${resultadoNum.toFixed(2)}
+        </div>
+        <div class="rowBtns">
+          <button type="button" class="edit">Editar</button>
+          <button type="button" class="close">Cerrar</button>
+          <button type="button" class="del">Borrar</button>
+        </div>
+      `;
 
-    // PnL recomendado: solo CLOSED
-    if (est === "CLOSED") pnlHoy += resultadoNum;
+      // Click en li => editar
+      li.addEventListener("click", () => {
+        document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
+        li.classList.add("editing");
+        cargarTradeEnFormulario(t);
+      });
 
-    const li = document.createElement("li");
+      // Editar
+      li.querySelector(".edit").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        cargarTradeEnFormulario(t);
+      });
 
-    li.innerHTML = `
-      <div class="row1">
-        <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""} (${t.sesgo || ""}) — <b>${est}</b>
-      </div>
-      <div class="row2">
-        ${fechaTrade} ${t.hora || ""} | $${resultadoNum.toFixed(2)}
-      </div>
-      <div class="rowBtns">
-        <button type="button" class="edit">Editar</button>
-        <button type="button" class="close">Cerrar</button>
-        <button type="button" class="del">Borrar</button>
-      </div>
-    `;
+      // Cerrar
+      li.querySelector(".close").addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (!t._row) return;
 
-    // Highlight + editar al tocar el li
-    li.addEventListener("click", () => {
-      document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
-      li.classList.add("editing");
-      cargarTradeEnFormulario(t);
+        const r = prompt("Resultado final ($). Ej: 25.50 o -12.00", t.resultado || "0");
+        if (r === null) return;
+
+        const payload = {
+          ...t,
+          resultado: r,
+          estado: "CLOSED",
+          cierre_fecha: todayLocalISO(),
+          _row: t._row,
+        };
+
+        try {
+          await apiPost(payload);
+          await cargarTrades();
+        } catch (err) {
+          console.error(err);
+          alert(`No se pudo cerrar: ${err.message}`);
+        }
+      });
+
+      // Borrar (soft delete)
+      li.querySelector(".del").addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (!t._row) return;
+
+        if (!confirm(`Borrar trade de ${t.ticker}?`)) return;
+
+        const payload = { ...t, estado: "DELETED", _row: t._row };
+
+        try {
+          await apiPost(payload);
+          await cargarTrades();
+        } catch (err) {
+          console.error(err);
+          alert(`No se pudo borrar: ${err.message}`);
+        }
+      });
+
+      list.appendChild(li);
     });
 
-    // Editar
-    li.querySelector(".edit").addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      cargarTradeEnFormulario(t);
-    });
-
-    // Cerrar
-    li.querySelector(".close").addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      if (!t._row) return;
-
-      const r = prompt("Resultado final ($). Ej: 25.50 o -12.00", t.resultado || "0");
-      if (r === null) return;
-
-      const payload = {
-        ...t,
-        resultado: r,
-        estado: "CLOSED",
-        cierre_fecha: todayLocalISO(),
-        _row: t._row
-      };
-
-      await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
-      cargarTrades();
-    });
-
-    // Borrar (soft delete)
-    li.querySelector(".del").addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      if (!t._row) return;
-
-      if (!confirm(`Borrar trade de ${t.ticker}?`)) return;
-
-      const payload = { ...t, estado: "DELETED", _row: t._row };
-      await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
-      cargarTrades();
-    });
-
-    list.appendChild(li);
-  });
-
-  // actualizar card PnL
-  pnlValue.textContent = `$${pnlHoy.toFixed(2)}`;
-  pnlCard.classList.remove("positive", "negative", "neutral");
-  if (pnlHoy > 0) pnlCard.classList.add("positive");
-  else if (pnlHoy < 0) pnlCard.classList.add("negative");
-  else pnlCard.classList.add("neutral");
+    // actualizar card PnL
+    pnlValue.textContent = `$${pnlHoy.toFixed(2)}`;
+    pnlCard.classList.remove("positive", "negative", "neutral");
+    if (pnlHoy > 0) pnlCard.classList.add("positive");
+    else if (pnlHoy < 0) pnlCard.classList.add("negative");
+    else pnlCard.classList.add("neutral");
+  } catch (err) {
+    console.error(err);
+    alert(`No se pudieron cargar trades: ${err.message}`);
+  }
 }
 
-// ---------- cargar trade en form (edición completa) ----------
+// ---------- cargar trade en form ----------
 function cargarTradeEnFormulario(t) {
   editRow = t._row;
 
