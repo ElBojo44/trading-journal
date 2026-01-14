@@ -1,7 +1,7 @@
 let editRow = null;
 
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbwybH9w2bcfcFIRamw9zUrb07lx13NxfP37FVCqI3AKuC3SEIGh6JUeCHhcIKbiRIIC/exec";
+  "https://script.google.com/macros/s/AKfycbwybH9w2bcfcFIRamw9zUrb071x13NxFP37FVCqI3AKuC3SEIGh6JUeCHhcIKbiRIIC/exec";
 
 // DOM
 const form = document.getElementById("tradeForm");
@@ -23,8 +23,8 @@ const resultado = document.getElementById("resultado");
 const notas = document.getElementById("notas");
 
 const estado = document.getElementById("estado");
-const saveBtn = document.getElementById("saveBtn");
-const cancelBtn = document.getElementById("cancelBtn");
+const saveBtn = document.getElementById("saveBtn");     // ojo: tu HTML tiene saveBtn
+const cancelBtn = document.getElementById("cancelBtn"); // ojo: tu HTML tiene cancelBtn
 
 // ---------- helpers ----------
 function todayLocalISO() {
@@ -50,12 +50,10 @@ function setHoraAhora() {
 function normalizarFecha(f) {
   if (!f) return null;
 
-  // si ya viene como yyyy-mm-dd o yyyy-mm-ddTHH...
   if (typeof f === "string" && f.includes("-")) {
     return f.split("T")[0];
   }
 
-  // si viene como número o Date
   const d = new Date(f);
   if (isNaN(d)) return null;
 
@@ -68,7 +66,6 @@ function normalizarFecha(f) {
 function salirModoEdicion() {
   editRow = null;
   if (saveBtn) saveBtn.textContent = "Guardar Trade";
-  // quitar highlight
   document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
 }
 
@@ -76,8 +73,8 @@ function salirModoEdicion() {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  const est = (estado?.value || "OPEN").toUpperCase();
-  const cierre = est === "CLOSED" ? todayLocalISO() : "";
+  const estValue = (estado?.value || "OPEN").toUpperCase();
+  const cierre = estValue === "CLOSED" ? todayLocalISO() : "";
 
   const trade = {
     fecha: fecha.value,
@@ -93,11 +90,9 @@ form.addEventListener("submit", async (e) => {
     resultado: resultado.value,
     notas: notas.value,
 
-    // nuevos
-    estado: est,
+    estado: estValue,
     cierre_fecha: cierre,
 
-    // edición
     _row: editRow
   };
 
@@ -106,7 +101,6 @@ form.addEventListener("submit", async (e) => {
     body: JSON.stringify(trade)
   });
 
-  // reset UI
   salirModoEdicion();
   form.reset();
   setFechaHoy();
@@ -128,8 +122,8 @@ async function cargarTrades() {
   const data = await res.json();
 
   const hoy = todayLocalISO();
-
   list.innerHTML = "";
+
   let pnlHoy = 0;
 
   data.forEach((t) => {
@@ -138,96 +132,83 @@ async function cargarTrades() {
     const fechaTrade = normalizarFecha(t.fecha);
     if (!fechaTrade) return;
 
-    // solo trades de hoy en la lista
-    if (fechaTrade === hoy) {
-      const resultadoNum = parseFloat(t.resultado) || 0;
+    const est = (t.estado || "OPEN").toUpperCase();
+    if (est === "DELETED") return; // soft delete
 
-      // ✅ PnL recomendado: solo CLOSED (si quieres incluir OPEN luego, lo cambiamos)
-      const est = (t.estado || "OPEN").toUpperCase();
-      if (est === "CLOSED") pnlHoy += resultadoNum;
+    // Solo trades de hoy
+    if (fechaTrade !== hoy) return;
 
-      const li = document.createElement("li");
+    const resultadoNum = parseFloat(t.resultado) || 0;
 
-      const est = (t.estado || "OPEN").toUpperCase();
-      const fechaMostrar = normalizarFecha(t.fecha) || "";
+    // PnL recomendado: solo CLOSED
+    if (est === "CLOSED") pnlHoy += resultadoNum;
 
-      li.innerHTML = `
-        <div class="row1">
-          <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""} (${t.sesgo || ""}) — <b>${est}</b>
-        </div>
-        <div class="row2">
-          ${fechaMostrar} ${t.hora || ""} | $${resultadoNum.toFixed(2)}
-        </div>
-        <div class="rowBtns">
-          <button type="button" class="edit">Editar</button>
-          <button type="button" class="close">Cerrar</button>
-          <button type="button" class="del">Borrar</button>
-        </div>
-      `;
+    const li = document.createElement("li");
 
-      // Editar
-      li.querySelector(".edit").addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        cargarTradeEnFormulario(t);
-      });
+    li.innerHTML = `
+      <div class="row1">
+        <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""} (${t.sesgo || ""}) — <b>${est}</b>
+      </div>
+      <div class="row2">
+        ${fechaTrade} ${t.hora || ""} | $${resultadoNum.toFixed(2)}
+      </div>
+      <div class="rowBtns">
+        <button type="button" class="edit">Editar</button>
+        <button type="button" class="close">Cerrar</button>
+        <button type="button" class="del">Borrar</button>
+      </div>
+    `;
 
-      // Cerrar
-      li.querySelector(".close").addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        if (!t._row) return;
+    // Highlight + editar al tocar el li
+    li.addEventListener("click", () => {
+      document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
+      li.classList.add("editing");
+      cargarTradeEnFormulario(t);
+    });
 
-        const r = prompt("Resultado final ($). Ej: 25.50 o -12.00", t.resultado || "0");
-        if (r === null) return;
+    // Editar
+    li.querySelector(".edit").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      cargarTradeEnFormulario(t);
+    });
 
-        const payload = {
-          ...t,
-          resultado: r,
-          estado: "CLOSED",
-          cierre_fecha: todayLocalISO(),
-          _row: t._row
-        };
+    // Cerrar
+    li.querySelector(".close").addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!t._row) return;
 
-        await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
-        cargarTrades();
-      });
+      const r = prompt("Resultado final ($). Ej: 25.50 o -12.00", t.resultado || "0");
+      if (r === null) return;
 
-      // Borrar (soft delete)
-      li.querySelector(".del").addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        if (!t._row) return;
+      const payload = {
+        ...t,
+        resultado: r,
+        estado: "CLOSED",
+        cierre_fecha: todayLocalISO(),
+        _row: t._row
+      };
 
-        if (!confirm(`Borrar trade de ${t.ticker}?`)) return;
+      await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
+      cargarTrades();
+    });
 
-        const payload = { ...t, estado: "DELETED", _row: t._row };
-        await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
-        cargarTrades();
-      });
+    // Borrar (soft delete)
+    li.querySelector(".del").addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!t._row) return;
 
-      // Click en el LI para editar también (opcional)
-      li.addEventListener("click", () => {
-        document.querySelectorAll("#tradesList li").forEach(el => el.classList.remove("editing"));
-        li.classList.add("editing");
-        cargarTradeEnFormulario(t);
-      });
+      if (!confirm(`Borrar trade de ${t.ticker}?`)) return;
 
-      list.appendChild(li);
+      const payload = { ...t, estado: "DELETED", _row: t._row };
+      await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
+      cargarTrades();
+    });
 
-
-      li.addEventListener("click", () => {
-        // highlight
-        document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
-        li.classList.add("editing");
-
-        cargarTradeEnFormulario(t);
-      });
-
-      list.appendChild(li);
-    }
+    list.appendChild(li);
   });
 
   // actualizar card PnL
   pnlValue.textContent = `$${pnlHoy.toFixed(2)}`;
-
   pnlCard.classList.remove("positive", "negative", "neutral");
   if (pnlHoy > 0) pnlCard.classList.add("positive");
   else if (pnlHoy < 0) pnlCard.classList.add("negative");
@@ -236,9 +217,8 @@ async function cargarTrades() {
 
 // ---------- cargar trade en form (edición completa) ----------
 function cargarTradeEnFormulario(t) {
-  editRow = t._row; // CLAVE
+  editRow = t._row;
 
-  // fecha/hora: si vienen en formato raro, normaliza lo que puedas
   fecha.value = normalizarFecha(t.fecha) || "";
   hora.value = t.hora || "";
 
@@ -255,7 +235,6 @@ function cargarTradeEnFormulario(t) {
   notas.value = t.notas || "";
 
   if (estado) estado.value = (t.estado || "OPEN").toUpperCase();
-
   if (saveBtn) saveBtn.textContent = "Guardar Cambios";
 }
 
