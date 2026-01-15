@@ -1,7 +1,7 @@
 let editRow = null;
 
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbwFbUhq9SB9BDW3B6tYsnyxS6bAenJR00pIfaQCttUCvpPqvi7qRfDXZz2LFac32QEk/exec";
+  "https://script.google.com/macros/s/AKfycbxZgGxjvElVrl1TzU4OgsEfxv5eG2pSlsUdUSnul2MfFUwyeQVeC7hTHP02jkoBS2dw/exec";
 
 // DOM
 const form = document.getElementById("tradeForm");
