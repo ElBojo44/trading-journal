@@ -3,6 +3,58 @@ let editRow = null;
 const API_URL =
   "https://script.google.com/macros/s/AKfycbzfUqoRycuCihTOg5AsRB_f9VBh4EEw_SyupdDX15VPBXvc4ceg-sLGRQy0AVm94o0i/exec";
 
+/**
+ * ========= NUEVO CATALOGO (source of truth) =========
+ * - categoria: lo elige el usuario
+ * - estrategia: se elige filtrada por categoria
+ * - tipo/sesgo: se derivan automaticamente (ya NO son inputs)
+ */
+const strategyCatalog = {
+  INGRESOS: [
+    { id: "CC", label: "Covered Call", tipo: "THETA", sesgo: "NEUTRAL_ALCISTA" },
+    { id: "CSP", label: "Cash Secured Put", tipo: "THETA", sesgo: "NEUTRAL_ALCISTA" },
+    { id: "WHEEL", label: "Wheel (Manual)", tipo: "THETA", sesgo: "NEUTRAL" },
+    { id: "DIAGONAL", label: "Diagonal (PMCC)", tipo: "THETA", sesgo: "NEUTRAL_ALCISTA" },
+    { id: "CALENDAR", label: "Calendar (Income)", tipo: "THETA", sesgo: "NEUTRAL" },
+  ],
+  DIRECCIONALES: [
+    { id: "LONG_CALL", label: "Long Call", tipo: "DIRECCIONAL", sesgo: "BULL" },
+    { id: "LONG_PUT", label: "Long Put", tipo: "DIRECCIONAL", sesgo: "BEAR" },
+    { id: "CALL_DEBIT", label: "Call Debit Spread", tipo: "DIRECCIONAL", sesgo: "BULL" },
+    { id: "PUT_DEBIT", label: "Put Debit Spread", tipo: "DIRECCIONAL", sesgo: "BEAR" },
+  ],
+  VOLATILIDAD: [
+    { id: "STRADDLE", label: "Long Straddle", tipo: "VOLATILIDAD", sesgo: "NEUTRAL" },
+    { id: "STRANGLE", label: "Long Strangle", tipo: "VOLATILIDAD", sesgo: "NEUTRAL" },
+  ],
+  SPREADS: [
+    { id: "PCS", label: "Put Credit Spread", tipo: "CREDITO", sesgo: "BULL" },
+    { id: "CCS", label: "Call Credit Spread", tipo: "CREDITO", sesgo: "BEAR" },
+    { id: "IC", label: "Iron Condor", tipo: "CREDITO", sesgo: "NEUTRAL" },
+    { id: "IB", label: "Iron Butterfly", tipo: "CREDITO", sesgo: "NEUTRAL" },
+  ],
+};
+
+// Reverse lookup por label (para trades viejos)
+const labelToStrategy = (() => {
+  const map = new Map();
+  Object.entries(strategyCatalog).forEach(([cat, arr]) => {
+    arr.forEach((s) => map.set(String(s.label).toLowerCase(), { cat, id: s.id }));
+  });
+  return map;
+})();
+
+function getStrategyByCatId(cat, id) {
+  const arr = strategyCatalog[cat];
+  if (!arr) return null;
+  return arr.find((s) => s.id === id) || null;
+}
+
+function findCatIdByLabel(label) {
+  if (!label) return null;
+  return labelToStrategy.get(String(label).toLowerCase()) || null;
+}
+
 // DOM
 const form = document.getElementById("tradeForm");
 const list = document.getElementById("tradesList");
@@ -12,9 +64,12 @@ const pnlValue = document.getElementById("pnlValue");
 const fecha = document.getElementById("fecha");
 const hora = document.getElementById("hora");
 const ticker = document.getElementById("ticker");
+
+// NUEVO
+const categoria = document.getElementById("categoria");
 const estrategia = document.getElementById("estrategia");
-const sesgo = document.getElementById("sesgo");
-const tipo = document.getElementById("tipo");
+
+// Restante igual
 const expiracion = document.getElementById("expiracion");
 const strikes = document.getElementById("strikes");
 
@@ -93,6 +148,26 @@ function calcularResultado() {
   resultado.value = Number.isFinite(pnl) ? pnl.toFixed(2) : "";
 }
 
+// ---------- NUEVO: llenar estrategias por categoria ----------
+function renderEstrategiasForCategoria(catValue, selectedId = "") {
+  estrategia.innerHTML = `<option value="">Estrategia</option>`;
+
+  const arr = strategyCatalog[catValue];
+  if (!arr) return;
+
+  arr.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = s.label;
+    if (selectedId && selectedId === s.id) opt.selected = true;
+    estrategia.appendChild(opt);
+  });
+}
+
+categoria?.addEventListener("change", () => {
+  renderEstrategiasForCategoria(categoria.value);
+});
+
 // ---------- JSONP GET (sin CORS) ----------
 function apiGetJSONP() {
   return new Promise((resolve, reject) => {
@@ -143,6 +218,16 @@ form.addEventListener("submit", async (e) => {
   // recalcula por si acaso
   calcularResultado();
 
+  // Derivar estrategia/tipo/sesgo a partir del catalog
+  const cat = (categoria.value || "").toUpperCase();
+  const stratId = estrategia.value || "";
+  const strat = getStrategyByCatId(cat, stratId);
+
+  if (!cat || !stratId || !strat) {
+    alert("Selecciona Categoría y Estrategia.");
+    return;
+  }
+
   const estValue = (estado?.value || "OPEN").toUpperCase();
   const cierre = estValue === "CLOSED" ? todayLocalISO() : "";
 
@@ -150,9 +235,14 @@ form.addEventListener("submit", async (e) => {
     fecha: fecha.value,
     hora: hora.value,
     ticker: (ticker.value || "").toUpperCase(),
-    estrategia: estrategia.value,
-    sesgo: sesgo.value,
-    tipo: tipo.value,
+
+    // NUEVO
+    categoria: cat,
+    estrategia_id: strat.id,
+    estrategia: strat.label,     // mantenemos 'estrategia' como label para display
+    sesgo: strat.sesgo,          // derivado
+    tipo: strat.tipo,            // derivado
+
     expiracion: expiracion.value,
     strikes: strikes.value,
 
@@ -185,6 +275,10 @@ form.addEventListener("submit", async (e) => {
     salida_tipo.value = "DEBITO";
     calcularResultado();
 
+    // reset selects
+    if (categoria) categoria.value = "";
+    renderEstrategiasForCategoria(""); // limpia estrategia
+
     setTimeout(cargarTrades, 600);
   } catch (err) {
     console.error(err);
@@ -202,6 +296,9 @@ cancelBtn?.addEventListener("click", () => {
   entrada_tipo.value = "CREDITO";
   salida_tipo.value = "DEBITO";
   calcularResultado();
+
+  if (categoria) categoria.value = "";
+  renderEstrategiasForCategoria("");
 });
 
 // ---------- cargar trades + PnL ----------
@@ -230,9 +327,13 @@ async function cargarTrades() {
 
       const li = document.createElement("li");
 
+      // Mostrar categoria si existe (para trades viejos puede venir vacío)
+      const catTxt = t.categoria ? ` • ${t.categoria}` : "";
+      const sesgoTxt = t.sesgo ? ` (${t.sesgo})` : "";
+
       li.innerHTML = `
         <div class="row1">
-          <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""} (${t.sesgo || ""}) — <b>${est}</b>
+          <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""}${sesgoTxt}${catTxt} — <b>${est}</b>
         </div>
         <div class="row2">
           ${fechaTrade} ${t.hora || ""} | $${resultadoNum.toFixed(2)}
@@ -335,9 +436,23 @@ function cargarTradeEnFormulario(t) {
   hora.value = t.hora || "";
 
   ticker.value = t.ticker || "";
-  estrategia.value = t.estrategia || "";
-  sesgo.value = t.sesgo || "";
-  tipo.value = t.tipo || "";
+
+  // Intentar rellenar categoria/estrategia:
+  // 1) si ya vienen nuevos campos categoria + estrategia_id
+  // 2) si es trade viejo, intentar map por label
+  let cat = (t.categoria || "").toUpperCase();
+  let stratId = t.estrategia_id || "";
+
+  if (!cat || !stratId) {
+    const found = findCatIdByLabel(t.estrategia);
+    if (found) {
+      cat = found.cat;
+      stratId = found.id;
+    }
+  }
+
+  if (categoria) categoria.value = cat || "";
+  renderEstrategiasForCategoria(cat || "", stratId || "");
 
   expiracion.value = normalizarFecha(t.expiracion) || (t.expiracion || "");
   strikes.value = t.strikes || "";
@@ -365,6 +480,10 @@ setHoraAhora();
 entrada_tipo.value = "CREDITO";
 salida_tipo.value = "DEBITO";
 calcularResultado();
+
+// inicializar selects
+if (categoria) categoria.value = "";
+renderEstrategiasForCategoria("");
 
 cargarTrades();
 
