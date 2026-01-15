@@ -1,7 +1,7 @@
 let editRow = null;
 
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbwoO-vCkdOzIxtn9NH-V68t59uy8j3M54KLpbENwSfVh2OeK2Z3-iEIbE30J-flpgWa/exec";
+  "https://script.google.com/macros/s/AKfycbxKeT-nbsnM_kZbn7LPAlNEjJtBWC-vq1u6t_3XP-ztaGuj2CQt5bLXDAHe-nEHoqFg/exec";
 
 // DOM
 const form = document.getElementById("tradeForm");
@@ -17,7 +17,13 @@ const sesgo = document.getElementById("sesgo");
 const tipo = document.getElementById("tipo");
 const expiracion = document.getElementById("expiracion");
 const strikes = document.getElementById("strikes");
+
+const entrada_tipo = document.getElementById("entrada_tipo");
 const credito_debito = document.getElementById("credito_debito");
+
+const salida_tipo = document.getElementById("salida_tipo");
+const credito_debito_salida = document.getElementById("credito_debito_salida");
+
 const contratos = document.getElementById("contratos");
 const resultado = document.getElementById("resultado");
 const notas = document.getElementById("notas");
@@ -66,6 +72,27 @@ function salirModoEdicion() {
   document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
 }
 
+function toSignedAmount(tipoSelectValue, amount) {
+  const t = (tipoSelectValue || "CREDITO").toUpperCase();
+  const val = parseFloat(amount) || 0;
+  return t === "DEBITO" ? -val : val; // Crédito +, Débito -
+}
+
+function calcularResultado() {
+  const qty = parseFloat(contratos.value) || 0;
+
+  const entradaSigned = toSignedAmount(entrada_tipo.value, credito_debito.value);
+  const salidaSigned = toSignedAmount(salida_tipo.value, credito_debito_salida.value);
+
+  if (!qty) {
+    resultado.value = "";
+    return;
+  }
+
+  const pnl = (entradaSigned + salidaSigned) * 100 * qty;
+  resultado.value = Number.isFinite(pnl) ? pnl.toFixed(2) : "";
+}
+
 // ---------- JSONP GET (sin CORS) ----------
 function apiGetJSONP() {
   return new Promise((resolve, reject) => {
@@ -94,20 +121,27 @@ function apiGetJSONP() {
 
 // ---------- POST sin CORS (fire-and-forget) ----------
 async function apiPostNoCORS(payload) {
-  // Content-Type text/plain evita preflight; no-cors evita bloqueo.
   await fetch(API_URL, {
     method: "POST",
     mode: "no-cors",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload),
   });
-
-  // No podemos leer respuesta. Asumimos que llegó.
 }
+
+// ---------- listeners para cálculo ----------
+credito_debito.addEventListener("input", calcularResultado);
+credito_debito_salida.addEventListener("input", calcularResultado);
+contratos.addEventListener("input", calcularResultado);
+entrada_tipo.addEventListener("change", calcularResultado);
+salida_tipo.addEventListener("change", calcularResultado);
 
 // ---------- submit ----------
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+
+  // recalcula por si acaso
+  calcularResultado();
 
   const estValue = (estado?.value || "OPEN").toUpperCase();
   const cierre = estValue === "CLOSED" ? todayLocalISO() : "";
@@ -121,10 +155,18 @@ form.addEventListener("submit", async (e) => {
     tipo: tipo.value,
     expiracion: expiracion.value,
     strikes: strikes.value,
+
+    entrada_tipo: (entrada_tipo.value || "CREDITO").toUpperCase(),
     credito_debito: credito_debito.value,
+
+    salida_tipo: (salida_tipo.value || "DEBITO").toUpperCase(),
+    credito_debito_salida: credito_debito_salida.value,
+
     contratos: contratos.value,
     resultado: resultado.value,
+
     notas: notas.value,
+
     estado: estValue,
     cierre_fecha: cierre,
     _row: editRow,
@@ -138,7 +180,11 @@ form.addEventListener("submit", async (e) => {
     setFechaHoy();
     setHoraAhora();
 
-    // Espera cortita para que el appendRow termine antes del GET
+    // defaults útiles
+    entrada_tipo.value = "CREDITO";
+    salida_tipo.value = "DEBITO";
+    calcularResultado();
+
     setTimeout(cargarTrades, 600);
   } catch (err) {
     console.error(err);
@@ -152,6 +198,10 @@ cancelBtn?.addEventListener("click", () => {
   form.reset();
   setFechaHoy();
   setHoraAhora();
+
+  entrada_tipo.value = "CREDITO";
+  salida_tipo.value = "DEBITO";
+  calcularResultado();
 });
 
 // ---------- cargar trades + PnL ----------
@@ -179,6 +229,7 @@ async function cargarTrades() {
       if (est === "CLOSED") pnlHoy += resultadoNum;
 
       const li = document.createElement("li");
+
       li.innerHTML = `
         <div class="row1">
           <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""} (${t.sesgo || ""}) — <b>${est}</b>
@@ -204,20 +255,37 @@ async function cargarTrades() {
         cargarTradeEnFormulario(t);
       });
 
+      // Cerrar (pide el precio de salida + tipo salida opcional)
       li.querySelector(".close").addEventListener("click", async (ev) => {
         ev.stopPropagation();
         if (!t._row) return;
 
-        const r = prompt("Resultado final ($). Ej: 25.50 o -12.00", t.resultado || "0");
-        if (r === null) return;
+        const s = prompt("Precio de salida (ej: 0.10)", t.credito_debito_salida || "0");
+        if (s === null) return;
+
+        const salidaTipo = prompt("Salida tipo: CREDITO o DEBITO", (t.salida_tipo || "DEBITO")).toUpperCase();
+        if (!salidaTipo) return;
 
         const payload = {
           ...t,
-          resultado: r,
+          credito_debito_salida: s,
+          salida_tipo: salidaTipo === "CREDITO" ? "CREDITO" : "DEBITO",
           estado: "CLOSED",
           cierre_fecha: todayLocalISO(),
-          _row: t._row,
+          _row: t._row
         };
+
+        // Recalcular resultado en frontend para guardar ya calculado
+        const qty = parseFloat(payload.contratos) || 0;
+        const entradaSigned = (String(payload.entrada_tipo || "CREDITO").toUpperCase() === "DEBITO")
+          ? -(parseFloat(payload.credito_debito) || 0)
+          : (parseFloat(payload.credito_debito) || 0);
+
+        const salidaSigned = (String(payload.salida_tipo || "DEBITO").toUpperCase() === "DEBITO")
+          ? -(parseFloat(payload.credito_debito_salida) || 0)
+          : (parseFloat(payload.credito_debito_salida) || 0);
+
+        payload.resultado = qty ? ((entradaSigned + salidaSigned) * 100 * qty).toFixed(2) : payload.resultado;
 
         try {
           await apiPostNoCORS(payload);
@@ -228,6 +296,7 @@ async function cargarTrades() {
         }
       });
 
+      // Borrar (soft delete)
       li.querySelector(".del").addEventListener("click", async (ev) => {
         ev.stopPropagation();
         if (!t._row) return;
@@ -258,6 +327,7 @@ async function cargarTrades() {
   }
 }
 
+// ---------- cargar trade en form ----------
 function cargarTradeEnFormulario(t) {
   editRow = t._row;
 
@@ -271,18 +341,31 @@ function cargarTradeEnFormulario(t) {
 
   expiracion.value = normalizarFecha(t.expiracion) || (t.expiracion || "");
   strikes.value = t.strikes || "";
+
+  entrada_tipo.value = (t.entrada_tipo || "CREDITO").toUpperCase();
   credito_debito.value = t.credito_debito || "";
+
+  salida_tipo.value = (t.salida_tipo || "DEBITO").toUpperCase();
+  credito_debito_salida.value = t.credito_debito_salida || "";
+
   contratos.value = t.contratos || "";
-  resultado.value = t.resultado || "";
   notas.value = t.notas || "";
 
   if (estado) estado.value = (t.estado || "OPEN").toUpperCase();
   if (saveBtn) saveBtn.textContent = "Guardar Cambios";
+
+  calcularResultado();
 }
 
 // ---------- init ----------
 setFechaHoy();
 setHoraAhora();
+
+// defaults
+entrada_tipo.value = "CREDITO";
+salida_tipo.value = "DEBITO";
+calcularResultado();
+
 cargarTrades();
 
 if ("serviceWorker" in navigator) {

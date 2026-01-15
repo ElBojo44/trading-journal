@@ -64,9 +64,26 @@
 
     <input type="date" id="expiracion" />
     <input type="text" id="strikes" placeholder="Strikes" />
-    <input type="number" step="0.01" id="credito_debito" placeholder="Crédito / Débito" />
+
+    <!-- ENTRADA -->
+    <select id="entrada_tipo" required>
+      <option value="CREDITO">Entrada: Crédito (+)</option>
+      <option value="DEBITO">Entrada: Débito (-)</option>
+    </select>
+    <input type="number" step="0.01" id="credito_debito" placeholder="Entrada (precio)" />
+
+    <!-- SALIDA -->
+    <select id="salida_tipo" required>
+      <option value="DEBITO">Salida: Débito (-)</option>
+      <option value="CREDITO">Salida: Crédito (+)</option>
+    </select>
+    <input type="number" step="0.01" id="credito_debito_salida" placeholder="Salida (precio)" />
+
     <input type="number" id="contratos" placeholder="Contratos" />
-    <input type="number" step="0.01" id="resultado" placeholder="Resultado $" />
+
+    <!-- Resultado calculado -->
+    <input type="number" step="0.01" id="resultado" placeholder="Resultado $" readonly />
+
     <input type="text" id="notas" placeholder="Notas" />
 
     <div class="btnRow">
