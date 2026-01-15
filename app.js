@@ -34,6 +34,16 @@ const strategyCatalog = {
     { id: "IB", label: "Iron Butterfly", tipo: "CREDITO", sesgo: "NEUTRAL" },
   ],
 };
+const brokerLabels = {
+  SIGMA_TRADE: "Sigma Trade",
+  THINKORSWIM: "ThinkorSwim",
+  ROBINHOOD: "Robinhood",
+  WEBULL: "Webull",
+};
+
+function prettyBroker(v) {
+  return brokerLabels[v] || v || "";
+}
 
 // Reverse lookup por label (para trades viejos)
 const labelToStrategy = (() => {
@@ -341,7 +351,7 @@ async function cargarTrades() {
 
       const catTxt = t.categoria ? ` • ${t.categoria}` : "";
       const sesgoTxt = t.sesgo ? ` (${t.sesgo})` : "";
-      const brokerTxt = t.broker ? ` • ${t.broker}` : "";
+      const brokerTxt = t.broker ? ` • ${prettyBroker(t.broker)}` : "";
 
       li.innerHTML = `
         <div class="row1">
