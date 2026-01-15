@@ -1,7 +1,7 @@
 let editRow = null;
 
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbxKeT-nbsnM_kZbn7LPAlNEjJtBWC-vq1u6t_3XP-ztaGuj2CQt5bLXDAHe-nEHoqFg/exec";
+  "https://script.google.com/macros/s/AKfycbwoO-vCkdOzIxtn9NH-V68t59uy8j3M54KLpbENwSfVh2OeK2Z3-iEIbE30J-flpgWa/exec";
 
 // DOM
 const form = document.getElementById("tradeForm");
@@ -49,11 +49,7 @@ function setHoraAhora() {
 
 function normalizarFecha(f) {
   if (!f) return null;
-
-  // si viene tipo "2026-01-14T..."
-  if (typeof f === "string" && f.includes("-")) {
-    return f.split("T")[0];
-  }
+  if (typeof f === "string" && f.includes("-")) return f.split("T")[0];
 
   const d = new Date(f);
   if (isNaN(d)) return null;
@@ -70,42 +66,43 @@ function salirModoEdicion() {
   document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
 }
 
-function setStatus(msg) {
-  // si luego quieres un div de estado, lo enchufamos aquí
-  // por ahora usamos console + alert suave
-  console.log(msg);
+// ---------- JSONP GET (sin CORS) ----------
+function apiGetJSONP() {
+  return new Promise((resolve, reject) => {
+    const cb = `__cb_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+
+    window[cb] = (data) => {
+      try {
+        resolve(data);
+      } finally {
+        delete window[cb];
+        script.remove();
+      }
+    };
+
+    const script = document.createElement("script");
+    script.src = `${API_URL}?callback=${cb}&_=${Date.now()}`;
+    script.onerror = () => {
+      delete window[cb];
+      script.remove();
+      reject(new Error("JSONP falló (no se pudo cargar el script)."));
+    };
+
+    document.body.appendChild(script);
+  });
 }
 
-// ---------- API helpers ----------
-async function apiPost(payload) {
-  const res = await fetch(API_URL, {
+// ---------- POST sin CORS (fire-and-forget) ----------
+async function apiPostNoCORS(payload) {
+  // Content-Type text/plain evita preflight; no-cors evita bloqueo.
+  await fetch(API_URL, {
     method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" }, // ✅ CRÍTICO
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload),
   });
 
-  // Apps Script a veces responde 200 aunque sea error lógico,
-  // por eso leemos JSON siempre.
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    const text = await res.text();
-    throw new Error(`Respuesta no-JSON: ${text}`);
-  }
-
-  if (!res.ok || data?.ok === false) {
-    const msg = data?.error || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-
-  return data;
-}
-
-async function apiGet() {
-  const res = await fetch(API_URL, { method: "GET" });
-  if (!res.ok) throw new Error(`GET falló: HTTP ${res.status}`);
-  return res.json();
+  // No podemos leer respuesta. Asumimos que llegó.
 }
 
 // ---------- submit ----------
@@ -128,23 +125,21 @@ form.addEventListener("submit", async (e) => {
     contratos: contratos.value,
     resultado: resultado.value,
     notas: notas.value,
-
     estado: estValue,
     cierre_fecha: cierre,
-
     _row: editRow,
   };
 
   try {
-    setStatus("Guardando trade...");
-    await apiPost(trade);
+    await apiPostNoCORS(trade);
 
     salirModoEdicion();
     form.reset();
     setFechaHoy();
     setHoraAhora();
-    await cargarTrades();
-    setStatus("Trade guardado ✅");
+
+    // Espera cortita para que el appendRow termine antes del GET
+    setTimeout(cargarTrades, 600);
   } catch (err) {
     console.error(err);
     alert(`No se pudo guardar: ${err.message}`);
@@ -162,7 +157,7 @@ cancelBtn?.addEventListener("click", () => {
 // ---------- cargar trades + PnL ----------
 async function cargarTrades() {
   try {
-    const data = await apiGet();
+    const data = await apiGetJSONP();
 
     const hoy = todayLocalISO();
     list.innerHTML = "";
@@ -177,7 +172,7 @@ async function cargarTrades() {
       const est = (t.estado || "OPEN").toUpperCase();
       if (est === "DELETED") return;
 
-      // Solo trades de hoy (si quieres ver todos, comenta esto)
+      // Solo trades de hoy
       if (fechaTrade !== hoy) return;
 
       const resultadoNum = parseFloat(t.resultado) || 0;
@@ -198,20 +193,17 @@ async function cargarTrades() {
         </div>
       `;
 
-      // Click en li => editar
       li.addEventListener("click", () => {
         document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
         li.classList.add("editing");
         cargarTradeEnFormulario(t);
       });
 
-      // Editar
       li.querySelector(".edit").addEventListener("click", (ev) => {
         ev.stopPropagation();
         cargarTradeEnFormulario(t);
       });
 
-      // Cerrar
       li.querySelector(".close").addEventListener("click", async (ev) => {
         ev.stopPropagation();
         if (!t._row) return;
@@ -228,26 +220,24 @@ async function cargarTrades() {
         };
 
         try {
-          await apiPost(payload);
-          await cargarTrades();
+          await apiPostNoCORS(payload);
+          setTimeout(cargarTrades, 600);
         } catch (err) {
           console.error(err);
           alert(`No se pudo cerrar: ${err.message}`);
         }
       });
 
-      // Borrar (soft delete)
       li.querySelector(".del").addEventListener("click", async (ev) => {
         ev.stopPropagation();
         if (!t._row) return;
-
         if (!confirm(`Borrar trade de ${t.ticker}?`)) return;
 
         const payload = { ...t, estado: "DELETED", _row: t._row };
 
         try {
-          await apiPost(payload);
-          await cargarTrades();
+          await apiPostNoCORS(payload);
+          setTimeout(cargarTrades, 600);
         } catch (err) {
           console.error(err);
           alert(`No se pudo borrar: ${err.message}`);
@@ -257,7 +247,6 @@ async function cargarTrades() {
       list.appendChild(li);
     });
 
-    // actualizar card PnL
     pnlValue.textContent = `$${pnlHoy.toFixed(2)}`;
     pnlCard.classList.remove("positive", "negative", "neutral");
     if (pnlHoy > 0) pnlCard.classList.add("positive");
@@ -269,7 +258,6 @@ async function cargarTrades() {
   }
 }
 
-// ---------- cargar trade en form ----------
 function cargarTradeEnFormulario(t) {
   editRow = t._row;
 
