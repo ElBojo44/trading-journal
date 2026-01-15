@@ -430,12 +430,31 @@ async function cargarTrades() {
         <div class="row2">
           ${t._fechaISO} ${t._hora} | $${t._resultadoNum.toFixed(2)}
         </div>
+      const closeBtnHtml =
+        t._estado === "OPEN"
+          ? `<button type="button" class="close">Cerrar</button>`
+        : "";
+
+      li.innerHTML = `
+        <div class="row1">
+          <strong>${t._tickerUp}</strong> — ${t.estrategia || ""}${sesgoTxt}${catTxt}${brokerTxt} — <b>${t._estado}</b>
+        </div>
+        <div class="row2">
+          ${t._fechaISO} ${t._hora} | $${t._resultadoNum.toFixed(2)}
+        </div>
         <div class="rowBtns">
           <button type="button" class="edit">Editar</button>
-          <button type="button" class="close">Cerrar</button>
+          ${closeBtnHtml}
           <button type="button" class="del">Borrar</button>
         </div>
       `;
+      const closeBtn = li.querySelector(".close");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          // lógica de cerrar (igual que ahora)
+        });
+      }
 
       li.addEventListener("click", () => {
         document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
