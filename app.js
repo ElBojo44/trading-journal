@@ -4,7 +4,7 @@ const API_URL =
   "https://script.google.com/macros/s/AKfycbzfUqoRycuCihTOg5AsRB_f9VBh4EEw_SyupdDX15VPBXvc4ceg-sLGRQy0AVm94o0i/exec";
 
 /**
- * ========= NUEVO CATALOGO (source of truth) =========
+ * ========= CATALOGO (source of truth) =========
  * - categoria: lo elige el usuario
  * - estrategia: se elige filtrada por categoria
  * - tipo/sesgo: se derivan automaticamente (ya NO son inputs)
@@ -65,7 +65,10 @@ const fecha = document.getElementById("fecha");
 const hora = document.getElementById("hora");
 const ticker = document.getElementById("ticker");
 
-// NUEVO
+// NUEVO: broker
+const broker = document.getElementById("broker");
+
+// NUEVO: categoria/estrategia
 const categoria = document.getElementById("categoria");
 const estrategia = document.getElementById("estrategia");
 
@@ -148,7 +151,7 @@ function calcularResultado() {
   resultado.value = Number.isFinite(pnl) ? pnl.toFixed(2) : "";
 }
 
-// ---------- NUEVO: llenar estrategias por categoria ----------
+// ---------- llenar estrategias por categoria ----------
 function renderEstrategiasForCategoria(catValue, selectedId = "") {
   estrategia.innerHTML = `<option value="">Estrategia</option>`;
 
@@ -223,6 +226,11 @@ form.addEventListener("submit", async (e) => {
   const stratId = estrategia.value || "";
   const strat = getStrategyByCatId(cat, stratId);
 
+  if (!broker.value) {
+    alert("Selecciona el Broker.");
+    return;
+  }
+
   if (!cat || !stratId || !strat) {
     alert("Selecciona Categoría y Estrategia.");
     return;
@@ -237,11 +245,13 @@ form.addEventListener("submit", async (e) => {
     ticker: (ticker.value || "").toUpperCase(),
 
     // NUEVO
+    broker: broker.value,
+
     categoria: cat,
     estrategia_id: strat.id,
-    estrategia: strat.label,     // mantenemos 'estrategia' como label para display
-    sesgo: strat.sesgo,          // derivado
-    tipo: strat.tipo,            // derivado
+    estrategia: strat.label,
+    sesgo: strat.sesgo,
+    tipo: strat.tipo,
 
     expiracion: expiracion.value,
     strikes: strikes.value,
@@ -276,8 +286,9 @@ form.addEventListener("submit", async (e) => {
     calcularResultado();
 
     // reset selects
+    if (broker) broker.value = "";
     if (categoria) categoria.value = "";
-    renderEstrategiasForCategoria(""); // limpia estrategia
+    renderEstrategiasForCategoria("");
 
     setTimeout(cargarTrades, 600);
   } catch (err) {
@@ -297,6 +308,7 @@ cancelBtn?.addEventListener("click", () => {
   salida_tipo.value = "DEBITO";
   calcularResultado();
 
+  if (broker) broker.value = "";
   if (categoria) categoria.value = "";
   renderEstrategiasForCategoria("");
 });
@@ -327,13 +339,13 @@ async function cargarTrades() {
 
       const li = document.createElement("li");
 
-      // Mostrar categoria si existe (para trades viejos puede venir vacío)
       const catTxt = t.categoria ? ` • ${t.categoria}` : "";
       const sesgoTxt = t.sesgo ? ` (${t.sesgo})` : "";
+      const brokerTxt = t.broker ? ` • ${t.broker}` : "";
 
       li.innerHTML = `
         <div class="row1">
-          <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""}${sesgoTxt}${catTxt} — <b>${est}</b>
+          <strong>${t.ticker || ""}</strong> — ${t.estrategia || ""}${sesgoTxt}${catTxt}${brokerTxt} — <b>${est}</b>
         </div>
         <div class="row2">
           ${fechaTrade} ${t.hora || ""} | $${resultadoNum.toFixed(2)}
@@ -437,9 +449,10 @@ function cargarTradeEnFormulario(t) {
 
   ticker.value = t.ticker || "";
 
+  // broker (si no existe en trade viejo, queda vacío)
+  if (broker) broker.value = t.broker || "";
+
   // Intentar rellenar categoria/estrategia:
-  // 1) si ya vienen nuevos campos categoria + estrategia_id
-  // 2) si es trade viejo, intentar map por label
   let cat = (t.categoria || "").toUpperCase();
   let stratId = t.estrategia_id || "";
 
@@ -482,6 +495,7 @@ salida_tipo.value = "DEBITO";
 calcularResultado();
 
 // inicializar selects
+if (broker) broker.value = "";
 if (categoria) categoria.value = "";
 renderEstrategiasForCategoria("");
 
