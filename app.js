@@ -1,7 +1,7 @@
 let editRow = null;
 
 const API_URL =
-  "https://script.google.com/macros/s/AKfycbwybH9w2bcfcFIRamw9zUrb071x13NxFP37FVCqI3AKuC3SEIGh6JUeCHhcIKbiRIIC/exec";
+  "https://script.google.com/macros/s/AKfycbxKeT-nbsnM_kZbn7LPAlNEjJtBWC-vq1u6t_3XP-ztaGuj2CQt5bLXDAHe-nEHoqFg/exec";
 
 // DOM
 const form = document.getElementById("tradeForm");
@@ -80,7 +80,7 @@ function setStatus(msg) {
 async function apiPost(payload) {
   const res = await fetch(API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" }, // ✅ CRÍTICO
+    headers: { "Content-Type": "text/plain;charset=utf-8" }, // ✅ CRÍTICO
     body: JSON.stringify(payload),
   });
 
