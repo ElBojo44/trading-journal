@@ -12,24 +12,41 @@
   <h1>📒 Trading Journal</h1>
 
   <div id="pnlCard" class="pnl neutral">
-    <span>PnL Hoy</span>
+    <span>PnL</span>
     <strong id="pnlValue">$0.00</strong>
   </div>
 
-  <form id="tradeForm">
-    <div class="field">
-      <input type="date" id="fecha" required />
-      <label for="fecha">Fecha</label>
-    </div>
+  <!-- FILTROS -->
+  <div class="filters">
+    <select id="historyRange">
+      <option value="TODAY">Hoy</option>
+      <option value="7D">Últimos 7 días</option>
+      <option value="30D">Últimos 30 días</option>
+      <option value="ALL">Todo</option>
+    </select>
 
-    <div class="field">
-      <input type="time" id="hora" required />
-      <label for="hora">Hora</label>
-    </div>
+    <select id="brokerFilter">
+      <option value="ALL">Broker: Todos</option>
+      <option value="SIGMA_TRADE">Sigma Trade</option>
+      <option value="THINKORSWIM">ThinkorSwim</option>
+      <option value="ROBINHOOD">Robinhood</option>
+      <option value="WEBULL">Webull</option>
+    </select>
+
+    <!-- NUEVO -->
+    <input
+      type="text"
+      id="tickerSearch"
+      placeholder="Buscar ticker (SPY, AAPL...)"
+    />
+  </div>
+
+  <form id="tradeForm">
+    <input type="date" id="fecha" required />
+    <input type="time" id="hora" required />
 
     <input type="text" id="ticker" placeholder="Ticker" required />
 
-    <!-- NUEVO: BROKER -->
     <select id="broker" required>
       <option value="">Broker</option>
       <option value="SIGMA_TRADE">Sigma Trade</option>
@@ -38,7 +55,6 @@
       <option value="WEBULL">Webull</option>
     </select>
 
-    <!-- NUEVO: CATEGORIA -->
     <select id="categoria" required>
       <option value="">Categoría</option>
       <option value="DIRECCIONALES">Direccionales</option>
@@ -47,12 +63,11 @@
       <option value="SPREADS">Spreads</option>
     </select>
 
-    <!-- NUEVO: ESTRATEGIA DINÁMICA -->
     <select id="estrategia" required>
       <option value="">Estrategia</option>
     </select>
 
-    <select id="estado" required>
+    <select id="estado">
       <option value="OPEN">OPEN</option>
       <option value="CLOSED">CLOSED</option>
     </select>
@@ -60,23 +75,19 @@
     <input type="date" id="expiracion" />
     <input type="text" id="strikes" placeholder="Strikes" />
 
-    <!-- ENTRADA -->
-    <select id="entrada_tipo" required>
+    <select id="entrada_tipo">
       <option value="CREDITO">Entrada: Crédito (+)</option>
       <option value="DEBITO">Entrada: Débito (-)</option>
     </select>
-    <input type="number" step="0.01" id="credito_debito" placeholder="Entrada (precio)" />
+    <input type="number" step="0.01" id="credito_debito" placeholder="Entrada" />
 
-    <!-- SALIDA -->
-    <select id="salida_tipo" required>
+    <select id="salida_tipo">
       <option value="DEBITO">Salida: Débito (-)</option>
       <option value="CREDITO">Salida: Crédito (+)</option>
     </select>
-    <input type="number" step="0.01" id="credito_debito_salida" placeholder="Salida (precio)" />
+    <input type="number" step="0.01" id="credito_debito_salida" placeholder="Salida" />
 
     <input type="number" id="contratos" placeholder="Contratos" />
-
-    <!-- Resultado calculado -->
     <input type="number" step="0.01" id="resultado" placeholder="Resultado $" readonly />
 
     <input type="text" id="notas" placeholder="Notas" />
@@ -87,7 +98,7 @@
     </div>
   </form>
 
-  <h2>📅 Trades de Hoy</h2>
+  <h2 id="listTitle">📅 Trades</h2>
   <ul id="tradesList"></ul>
 
   <script src="app.js"></script>
