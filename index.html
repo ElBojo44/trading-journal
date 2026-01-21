@@ -74,6 +74,24 @@
       <option value="">Estrategia</option>
     </select>
 
+    <input id="position_id" placeholder="position_id (ej: AAPL-DIAGONAL-...)" />
+
+    <select id="pata">
+      <option value="">Pata</option>
+      <option value="SHORT">SHORT</option>
+      <option value="LONG">LONG</option>
+      <option value="STOCK">STOCK</option>
+    </select>
+
+    <select id="accion">
+      <option value="OPEN">OPEN</option>
+      <option value="CLOSE">CLOSE</option>
+      <option value="ROLL_CLOSE">ROLL_CLOSE</option>
+      <option value="ROLL_OPEN">ROLL_OPEN</option>
+    </select>
+
+    <input id="roll_group_id" type="hidden" />
+
     <select id="estado" required>
       <option value="OPEN">OPEN</option>
       <option value="CLOSED">CLOSED</option>
