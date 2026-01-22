@@ -632,6 +632,7 @@ async function cargarTrades() {
           alert("Este trade es antiguo o no tiene referencia de fila. Bórralo directamente desde Google Sheets.");
           return;
         }
+       
         if (!confirm(`Borrar trade de ${t._tickerUp}?`)) return;
 
         const payload = { ...t, estado: "DELETED", _row: t._rowNum };
