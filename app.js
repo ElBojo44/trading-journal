@@ -572,19 +572,35 @@ async function cargarTrades() {
 
       li.innerHTML = `
         <div class="row1">
-          <strong>${t._tickerUp}</strong> — ${t.estrategia || ""}${sesgoTxt}${catTxt}${brokerTxt}
-          ${posTxt}${legTxt}${accionTxt} — <b>${t._estado}</b>
+          <strong>${t._tickerUp}</strong> — ${t.estrategia || ""} • ${prettyBroker(t.broker)}
         </div>
+
         <div class="row2">
-          ${t._fechaISO} ${t._hora} | $${t._resultadoNum.toFixed(2)}
+          <small>
+            Posición: <b>${t._posId || "—"}</b><br/>
+            Pata: <b>${t._pata || "—"}</b>
+            | Strike(s): <b>${t.strikes || "—"}</b>
+            | Exp: <b>${normalizarFecha(t.expiracion) || "—"}</b>
+            | Qty: <b>${t.contratos || "—"}</b>
+          </small>
         </div>
+
+        <div class="row3">
+          <small>
+            Entrada: <b>${t.entrada_tipo === "DEBITO" ? "-" : "+"}${t.credito_debito || "—"}</b>
+            | Estado: <b>${t._estado}</b>
+            ${t._estado === "CLOSED" ? ` | PnL: $${t._resultadoNum.toFixed(2)}` : ""}
+          </small>
+        </div>
+
         <div class="rowBtns">
           <button type="button" class="edit">Editar</button>
-          ${closeLegBtnHtml}
-          ${rollLegBtnHtml}
+          ${t._estado === "OPEN" ? `<button type="button" class="closeLeg">Cerrar pata</button>` : ""}
+          ${t._estado === "OPEN" ? `<button type="button" class="rollLeg">Roll pata</button>` : ""}
           <button type="button" class="del">Borrar</button>
         </div>
       `;
+
 
       li.addEventListener("click", () => {
         document.querySelectorAll("#tradesList li").forEach((el) => el.classList.remove("editing"));
