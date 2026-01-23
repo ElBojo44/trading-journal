@@ -574,23 +574,55 @@ async function cargarTrades() {
       ].join("|");
     }
 
+    function legGroupKey(t) {
+      return [
+        (t._posId || "").trim(),
+        (t._pata || "").trim(),
+      ].join("|");
+    }
+
     const openSet = new Set();
+    const openStackByLeg = new Map(); // legGroupKey -> [legKey, legKey, ...]
 
     timeline.forEach((t) => {
       if (!t._posId || !t._pata) return;
 
       const key = legKey(t);
+      const gk = legGroupKey(t);
+
       const act = (t._accion || "").toUpperCase();
       const st = (t._estado || "").toUpperCase();
 
-      // Eventos de apertura (OPEN / ROLL_OPEN)
+      
+
+      // OPEN / ROLL_OPEN
       if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "")) {
         openSet.add(key);
+        const arr = openStackByLeg.get(gk) || [];
+        arr.push(key);
+        openStackByLeg.set(gk, arr);
       }
 
-      // Eventos de cierre (CLOSE / ROLL_CLOSE)
+      // CLOSE / ROLL_CLOSE
       if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE")) {
-        openSet.delete(key);
+        // intento 1: cerrar exacto
+        if (openSet.has(key)) {
+          openSet.delete(key);
+
+          const arr = openStackByLeg.get(gk) || [];
+          const idx = arr.lastIndexOf(key);
+          if (idx >= 0) arr.splice(idx, 1);
+          openStackByLeg.set(gk, arr);
+          return;
+        }
+
+        // fallback: cerrar el último OPEN de ese position_id+pata
+        const arr = openStackByLeg.get(gk) || [];
+        const last = arr.pop();
+        if (last) {
+          openSet.delete(last);
+        }
+        openStackByLeg.set(gk, arr);
       }
     });
 
@@ -620,7 +652,7 @@ async function cargarTrades() {
       const legTxt = t._pata ? ` • ${t._pata}` : "";
       const accionTxt = t._accion ? ` • ${t._accion}` : "";
 
-      const isOpenEvent = t._estado === "OPEN";
+      const isOpenEvent = t._estado === "OPEN" && isReallyOpen);
       const closeLegBtnHtml = isOpenEvent ? `<button type="button" class="closeLeg">Cerrar pata</button>` : "";
       const rollLegBtnHtml = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
       const openTag = (t._estado === "OPEN" && !isReallyOpen) ? " (ya cerrada)" : "";
