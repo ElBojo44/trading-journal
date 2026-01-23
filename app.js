@@ -76,6 +76,9 @@ const listTitle = document.getElementById("listTitle");
 const historyRange = document.getElementById("historyRange");
 const brokerFilter = document.getElementById("brokerFilter");
 const tickerSearch = document.getElementById("tickerSearch");
+const statusView = document.getElementById("statusView");
+statusView?.addEventListener("change", () => cargarTrades());
+
 
 const fecha = document.getElementById("fecha");
 const hora = document.getElementById("hora");
@@ -555,8 +558,59 @@ async function cargarTrades() {
       if (t._estado === "CLOSED") pnl += t._resultadoNum;
     });
 
+    // ===== Determinar patas ABIERTAS reales (por timeline) =====
+    const timeline = [...items].sort((a, b) => {
+      const ak = `${a._fechaISO} ${a._hora}`;
+      const bk = `${b._fechaISO} ${b._hora}`;
+      return ak.localeCompare(bk);
+    });
+
+    function legKey(t) {
+      return [
+        (t._posId || "").trim(),
+        (t._pata || "").trim(),
+        (normalizarFecha(t.expiracion) || "").trim(),
+        String(t.strikes || "").trim(),
+      ].join("|");
+    }
+
+    const openSet = new Set();
+
+    timeline.forEach((t) => {
+      if (!t._posId || !t._pata) return;
+
+      const key = legKey(t);
+      const act = (t._accion || "").toUpperCase();
+      const st = (t._estado || "").toUpperCase();
+
+      // Eventos de apertura (OPEN / ROLL_OPEN)
+      if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "")) {
+        openSet.add(key);
+      }
+
+      // Eventos de cierre (CLOSE / ROLL_CLOSE)
+      if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE")) {
+        openSet.delete(key);
+      }
+    });
+
+
     items.forEach((t) => {
       const li = document.createElement("li");
+
+      const view = statusView?.value || "OPEN_ONLY";
+      const key = legKey(t);
+      const isReallyOpen = openSet.has(key);
+
+      // Filtrado
+      if (view === "OPEN_ONLY") {
+        // Solo mostrar OPEN que todavía están abiertos de verdad
+        if (!(t._estado === "OPEN" && isReallyOpen)) return;
+      }
+
+      if (view === "CLOSED_ONLY") {
+        if (t._estado !== "CLOSED") return;
+      }
 
       const sesgoTxt = t.sesgo ? ` (${t.sesgo})` : "";
       const catTxt = t.categoria ? ` • ${t.categoria}` : "";
@@ -569,6 +623,7 @@ async function cargarTrades() {
       const isOpenEvent = t._estado === "OPEN";
       const closeLegBtnHtml = isOpenEvent ? `<button type="button" class="closeLeg">Cerrar pata</button>` : "";
       const rollLegBtnHtml = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
+      const openTag = (t._estado === "OPEN" && !isReallyOpen) ? " (ya cerrada)" : "";
 
       li.innerHTML = `
         <div class="row1">
@@ -588,7 +643,7 @@ async function cargarTrades() {
         <div class="row3">
           <small>
             Entrada: <b>${t.entrada_tipo === "DEBITO" ? "-" : "+"}${t.credito_debito || "—"}</b>
-            | Estado: <b>${t._estado}</b>
+            | Estado: <b>${t._estado}${openTag}</b>
             ${t._estado === "CLOSED" ? ` | PnL: $${t._resultadoNum.toFixed(2)}` : ""}
           </small>
         </div>
