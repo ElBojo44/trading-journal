@@ -652,7 +652,7 @@ async function cargarTrades() {
       const legTxt = t._pata ? ` • ${t._pata}` : "";
       const accionTxt = t._accion ? ` • ${t._accion}` : "";
 
-      const isOpenEvent = t._estado === "OPEN" && isReallyOpen);
+      const isOpenEvent = (t._estado === "OPEN" && isReallyOpen);
       const closeLegBtnHtml = isOpenEvent ? `<button type="button" class="closeLeg">Cerrar pata</button>` : "";
       const rollLegBtnHtml = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
       const openTag = (t._estado === "OPEN" && !isReallyOpen) ? " (ya cerrada)" : "";
@@ -828,5 +828,13 @@ renderEstrategiasForCategoria(categoria?.value || "");
 cargarTrades();
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("service-worker.js");
+  const isLocalhost =
+    location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  const isHttps = location.protocol === "https:";
+
+  if (isHttps || isLocalhost) {
+    navigator.serviceWorker.register("service-worker.js");
+  } else {
+    console.log("Service Worker no se registra en este origen:", location.origin);
+  }
 }
