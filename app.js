@@ -567,18 +567,12 @@ function renderSpreads(spreadGroups) {
       </div>
       <div class="rowBtns">
         <button type="button" class="toggle">Ver patas</button>
-        ${isOpen ? `<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>` : ""}
+        ${isOpen ? '<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>' : ""}
       </div>
       
       <div class="events" style="display:none; margin-top:8px;"></div>
     `;
-    const closeNetBtn = li.querySelector(".closeSpreadNet");
-    if (closeNetBtn) {
-      closeNetBtn.addEventListener("click", async () => {
-        // handler del cierre neto
-      });
-    }
-
+   
 
     const eventsDiv = li.querySelector(".events");
     const toggleBtn = li.querySelector(".toggle");
@@ -793,41 +787,45 @@ async function cargarTrades() {
     const openSet = new Set();
     const openStackByLeg = new Map();
 
-    timeline.forEach((t) => {
-      if (!t._posId || !t._pata) return;
+timeline.forEach((t) => {
+  if (!t._posId || !t._pata) return;
 
-      const key = legKey(t);
-      const gk = legGroupKey(t);
+  const key = legKey(t);
+  const gk = legGroupKey(t);
 
-      const act = (t._accion || "").toUpperCase();
-      const st = (t._estado || "").toUpperCase();
+  const act = (t._accion || "").toUpperCase();
+  const st = (t._estado || "").toUpperCase();
 
-      if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "")) {
-        openSet.add(key);
-        const arr = openStackByLeg.get(gk) || [];
-        arr.push(key);
-        openStackByLeg.set(gk, arr);
-      }
+  // OPEN / ROLL_OPEN => abre una pata específica (por expiración+strike)
+  if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "")) {
+    openSet.add(key);
+    const arr = openStackByLeg.get(gk) || [];
+    arr.push(key);
+    openStackByLeg.set(gk, arr);
+  }
 
-      if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE")) {
-        // (igual que lo tienes)
-        ...
-      }
+  // CLOSE / ROLL_CLOSE => cierra la ÚLTIMA pata abierta de ese (posId|pata)
+  if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE")) {
+    const arr = openStackByLeg.get(gk) || [];
+    const last = arr.pop();
+    if (last) openSet.delete(last);
+    openStackByLeg.set(gk, arr);
+  }
 
-      // ✅ NUEVO: cierre neto del spread
-      if (st === "CLOSED" && act === "CLOSE_SPREAD") {
-        // cerrar 1 SHORT y 1 LONG de esa posición (lo último abierto)
-        const pos = (t._posId || "").trim();
-        if (!pos) return;
+  // ✅ cierre neto del spread: mata 1 SHORT y 1 LONG (últimos abiertos) para ese position_id
+  if (st === "CLOSED" && act === "CLOSE_SPREAD") {
+    const pos = (t._posId || "").trim();
+    if (!pos) return;
 
-        ["SHORT", "LONG"].forEach((leg) => {
-          const gk = `${pos}|${leg}`;
-          const arr = openStackByLeg.get(gk) || [];
-          const last = arr.pop();
-          if (last) openSet.delete(last);
-          openStackByLeg.set(gk, arr);
-        });
-      }
+    ["SHORT", "LONG"].forEach((leg) => {
+      const gk2 = `${pos}|${leg}`;
+      const arr2 = openStackByLeg.get(gk2) || [];
+      const last2 = arr2.pop();
+      if (last2) openSet.delete(last2);
+      openStackByLeg.set(gk2, arr2);
+    });
+  }
+}); // ✅ ESTE CIERRE ES EL QUE TE FALTA
 
 
     // ===== SPREAD GROUPS (PCS) =====
@@ -908,9 +906,10 @@ async function cargarTrades() {
           <small>
             Entrada: <b>${(safeUpper(t.entrada_tipo) === "DEBITO" ? "-" : "+")}${t.credito_debito || "—"}</b>
             | Estado: <b>${t._estado}${openTag}</b>
-            ${t._estado === "CLOSED" ? ` | PnL: <b>${fmtMoney(t._resultadoNum)}</b>` : ""}
+            ${t._estado === "CLOSED" ? ' | PnL: <b>' + fmtMoney(t._resultadoNum) + '</b>' : ""}
           </small>
         </div>
+
         <div class="rowBtns">
           <button type="button" class="edit">Editar</button>
           ${closeLegBtnHtml}
@@ -981,7 +980,7 @@ async function cargarTrades() {
     });
 
     // pnl card
-    if (pnlValue) pnlValue.textContent = `$${pnl.toFixed(2)}`;
+    if (pnlValue) pnlValue.textContent = "$" + pnl.toFixed(2);
     if (pnlCard) {
       pnlCard.classList.remove("positive", "negative", "neutral");
       if (pnl > 0) pnlCard.classList.add("positive");
