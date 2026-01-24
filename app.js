@@ -567,9 +567,18 @@ function renderSpreads(spreadGroups) {
       </div>
       <div class="rowBtns">
         <button type="button" class="toggle">Ver patas</button>
+        ${isOpen ? `<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>` : ""}
       </div>
+      
       <div class="events" style="display:none; margin-top:8px;"></div>
     `;
+    const closeNetBtn = li.querySelector(".closeSpreadNet");
+    if (closeNetBtn) {
+      closeNetBtn.addEventListener("click", async () => {
+        // handler del cierre neto
+      });
+    }
+
 
     const eventsDiv = li.querySelector(".events");
     const toggleBtn = li.querySelector(".toggle");
@@ -606,6 +615,83 @@ function renderSpreads(spreadGroups) {
       eventsDiv.style.display = isHidden ? "block" : "none";
       toggleBtn.textContent = isHidden ? "Ocultar patas" : "Ver patas";
     });
+
+    // 👉 Cerrar Spread (Neto)
+const closeSpreadNetBtn = li.querySelector(".closeSpreadNet");
+if (closeSpreadNetBtn) {
+  closeSpreadNetBtn.addEventListener("click", async () => {
+    // patas realmente abiertas
+    const openLegs = legs.filter(e => e._estado === "OPEN" && e._isReallyOpen);
+
+    const shortLeg = openLegs.find(e => (e._pata || "").toUpperCase() === "SHORT");
+    const longLeg  = openLegs.find(e => (e._pata || "").toUpperCase() === "LONG");
+
+    if (!shortLeg || !longLeg) {
+      alert("Para cerrar neto se necesita SHORT y LONG abiertos.");
+      return;
+    }
+
+    const shortEntry =
+      Number(shortLeg.credito_debito || 0) *
+      ((shortLeg.entrada_tipo || "").toUpperCase() === "DEBITO" ? -1 : 1);
+
+    const longEntry =
+      Number(longLeg.credito_debito || 0) *
+      ((longLeg.entrada_tipo || "").toUpperCase() === "DEBITO" ? -1 : 1);
+
+    const netEntry = shortEntry + longEntry;
+
+    const netOutStr = prompt(
+      `Cerrar PCS NETO\nEntrada neta: ${netEntry.toFixed(2)}\n\nPrecio neto de salida (ej: 1.20):`,
+      ""
+    );
+    if (netOutStr === null) return;
+
+    const netOut = Number(netOutStr);
+    if (!Number.isFinite(netOut) || netOut < 0) {
+      alert("Precio de salida inválido.");
+      return;
+    }
+
+    if (!confirm(`Confirmar cierre NETO del spread ${g.ticker}?`)) return;
+
+    const qty = Number(shortLeg.contratos || longLeg.contratos || 1) || 1;
+    const pnl = (netEntry - netOut) * 100 * qty;
+
+    const payload = {
+      ...shortLeg,
+      _row: null,
+      force_new: true,
+
+      position_id: g.position_id,
+      pata: "SPREAD",
+      accion: "CLOSE_SPREAD",
+      estado: "CLOSED",
+      cierre_fecha: todayLocalISO(),
+
+      entrada_tipo: "CREDITO",
+      credito_debito: netEntry.toFixed(2),
+      salida_tipo: "DEBITO",
+      credito_debito_salida: netOut.toFixed(2),
+
+      strikes: `S:${shortLeg.strikes}|L:${longLeg.strikes}`,
+      expiracion: shortLeg.expiracion || longLeg.expiracion || "",
+
+      contratos: qty,
+      resultado: pnl.toFixed(2),
+      notas: (shortLeg.notas || "") + " [Cierre NETO]",
+    };
+
+    try {
+      await apiPostNoCORS(payload);
+      setTimeout(cargarTrades, 700);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo cerrar el spread neto.");
+    }
+  });
+}
+
 
     eventsDiv.addEventListener("click", async (ev) => {
       const el = ev.target;
@@ -724,20 +810,25 @@ async function cargarTrades() {
       }
 
       if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE")) {
-        if (openSet.has(key)) {
-          openSet.delete(key);
-          const arr = openStackByLeg.get(gk) || [];
-          const idx = arr.lastIndexOf(key);
-          if (idx >= 0) arr.splice(idx, 1);
-          openStackByLeg.set(gk, arr);
-          return;
-        }
-        const arr = openStackByLeg.get(gk) || [];
-        const last = arr.pop();
-        if (last) openSet.delete(last);
-        openStackByLeg.set(gk, arr);
+        // (igual que lo tienes)
+        ...
       }
-    });
+
+      // ✅ NUEVO: cierre neto del spread
+      if (st === "CLOSED" && act === "CLOSE_SPREAD") {
+        // cerrar 1 SHORT y 1 LONG de esa posición (lo último abierto)
+        const pos = (t._posId || "").trim();
+        if (!pos) return;
+
+        ["SHORT", "LONG"].forEach((leg) => {
+          const gk = `${pos}|${leg}`;
+          const arr = openStackByLeg.get(gk) || [];
+          const last = arr.pop();
+          if (last) openSet.delete(last);
+          openStackByLeg.set(gk, arr);
+        });
+      }
+
 
     // ===== SPREAD GROUPS (PCS) =====
     const spreadGroups = {};
@@ -827,6 +918,7 @@ async function cargarTrades() {
           <button type="button" class="del">Borrar</button>
         </div>
       `;
+        
 
       // Editar
       li.querySelector(".edit").addEventListener("click", (ev) => {
