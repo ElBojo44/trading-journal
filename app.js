@@ -141,6 +141,240 @@ function wrapBadges(htmlBadges) {
 }
 
 
+// ---------- Dashboard KPI ----------
+function ensureDashboardContainer() {
+  // Try to attach near PnL card / title
+  let el = document.getElementById("statsDashboard");
+  if (el) return el;
+
+  // Inject responsive styles once
+  if (!document.getElementById("statsDashboardStyles")) {
+    const st = document.createElement("style");
+    st.id = "statsDashboardStyles";
+    st.textContent = `
+      #statsDashboard{
+        margin:12px 0 14px;
+        border:1px solid rgba(0,0,0,.08);
+        border-radius:12px;
+        background:#fff;
+        overflow:hidden;
+      }
+      #statsDashboard .dashHead{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:10px 12px;
+        background:rgba(0,0,0,.03);
+      }
+      #statsDashboard .dashTitle{
+        font-weight:700;
+        font-size:13px;
+        opacity:.9;
+      }
+      #statsDashboard .dashToggle{
+        border:1px solid rgba(0,0,0,.15);
+        background:#fff;
+        border-radius:10px;
+        padding:6px 10px;
+        cursor:pointer;
+        font-size:13px;
+      }
+      #statsDashboard .dashBody{
+        padding:12px;
+      }
+      #statsDashboard .dashGrid{
+        display:flex;
+        flex-wrap:wrap;
+        gap:10px;
+        align-items:stretch;
+      }
+      #statsDashboard .dashCol{
+        flex:1;
+        min-width:260px;
+      }
+      #statsDashboard .dashBadges{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      #statsDashboard .dashMeta{
+        margin-top:8px;
+        font-size:13px;
+        opacity:.9;
+        line-height:1.35;
+      }
+      #statsDashboard .dashTableWrap{
+        overflow:auto;
+        -webkit-overflow-scrolling:touch;
+        border-radius:10px;
+      }
+      #statsDashboard table{
+        width:100%;
+        border-collapse:collapse;
+        font-size:13px;
+        min-width:420px; /* permite scroll horizontal en móvil */
+      }
+      #statsDashboard th, #statsDashboard td{
+        padding:4px 6px;
+      }
+      #statsDashboard thead{
+        opacity:.8;
+      }
+
+      @media (max-width: 520px){
+        #statsDashboard .dashCol{ min-width: 100%; }
+        #statsDashboard .dashBody{ padding:10px; }
+        #statsDashboard .dashMeta{ font-size:12px; }
+        #statsDashboard .dashToggle{ font-size:12px; padding:6px 9px; }
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  el = document.createElement("div");
+  el.id = "statsDashboard";
+  el.innerHTML = `
+    <div class="dashHead">
+      <div class="dashTitle">📊 Dashboard</div>
+      <button type="button" class="dashToggle" aria-expanded="true">Ocultar</button>
+    </div>
+    <div class="dashBody"></div>
+  `;
+
+  const parent =
+    (pnlCard && pnlCard.parentElement) ||
+    (listTitle && listTitle.parentElement) ||
+    document.body;
+
+  if (pnlCard && pnlCard.parentElement) {
+    pnlCard.insertAdjacentElement("afterend", el);
+  } else if (listTitle) {
+    listTitle.insertAdjacentElement("afterend", el);
+  } else {
+    parent.prepend(el);
+  }
+
+  // Toggle behavior + persistence
+  const btn = el.querySelector(".dashToggle");
+  const body = el.querySelector(".dashBody");
+  const key = "statsDashboardCollapsed";
+  const collapsed = localStorage.getItem(key) === "1";
+  if (collapsed) {
+    body.style.display = "none";
+    btn.textContent = "Mostrar";
+    btn.setAttribute("aria-expanded", "false");
+  }
+
+  btn.addEventListener("click", () => {
+    const isHidden = body.style.display === "none";
+    body.style.display = isHidden ? "block" : "none";
+    btn.textContent = isHidden ? "Ocultar" : "Mostrar";
+    btn.setAttribute("aria-expanded", isHidden ? "true" : "false");
+    localStorage.setItem(key, isHidden ? "0" : "1");
+  });
+
+  return el;
+}
+
+function pct(n) {
+  if (!Number.isFinite(n)) return "—";
+  return (n * 100).toFixed(0) + "%";
+}
+
+function avg(arr) {
+  if (!arr.length) return 0;
+  return arr.reduce((a,b)=>a+b,0) / arr.length;
+}
+
+function renderDashboard(items) {
+  const el = ensureDashboardContainer();
+  const body = el.querySelector(".dashBody");
+  if (!body) return;
+
+  const closed = items.filter(t => (t._estado || "").toUpperCase() === "CLOSED");
+  const openReal = items.filter(t => (t._estado || "").toUpperCase() === "OPEN" && t._isReallyOpen);
+
+  const pnlTotal = closed.reduce((s,t)=> s + (Number(t._resultadoNum)||0), 0);
+  const wins = closed.filter(t => (Number(t._resultadoNum)||0) > 0);
+  const losses = closed.filter(t => (Number(t._resultadoNum)||0) < 0);
+
+  const winRate = closed.length ? wins.length / closed.length : NaN;
+
+  function avg(arr){
+    const a = (Array.isArray(arr) ? arr : []).map(Number).filter(Number.isFinite);
+    return a.length ? a.reduce((s,v)=>s+v,0)/a.length : 0;
+  }
+  function pct(x){
+    return Number.isFinite(x) ? (x*100).toFixed(0) + "%" : "—";
+  }
+
+  const avgWin = wins.length ? avg(wins.map(t => Number(t._resultadoNum)||0)) : 0;
+  const avgLoss = losses.length ? avg(losses.map(t => Number(t._resultadoNum)||0)) : 0;
+  const expectancy = Number.isFinite(winRate) ? (winRate*avgWin + (1-winRate)*avgLoss) : 0;
+
+  // by strategy (top 6 by pnl)
+  const byStrat = new Map();
+  closed.forEach(t => {
+    const k = (t.estrategia_id || t.estrategia || "—").toString();
+    const rec = byStrat.get(k) || { pnl:0, n:0, w:0 };
+    const r = Number(t._resultadoNum)||0;
+    rec.pnl += r;
+    rec.n += 1;
+    if (r > 0) rec.w += 1;
+    byStrat.set(k, rec);
+  });
+
+  const stratRows = [...byStrat.entries()]
+    .sort((a,b)=> (b[1].pnl - a[1].pnl))
+    .slice(0, 6)
+    .map(([k,v]) => {
+      const wr = v.n ? v.w / v.n : NaN;
+      return `<tr>
+        <td style="white-space:nowrap;"><b>${escHtml(k)}</b></td>
+        <td style="text-align:right;">${fmtMoney(v.pnl)}</td>
+        <td style="text-align:right;">${v.n}</td>
+        <td style="text-align:right;">${pct(wr)}</td>
+      </tr>`;
+    }).join("");
+
+  body.innerHTML = `
+    <div class="dashGrid">
+      <div class="dashCol">
+        <div class="dashBadges">
+          ${badge("Cerrados: " + closed.length, "#111827")}
+          ${badge("Abiertos: " + openReal.length, "#064e3b")}
+          ${badge("Win rate: " + (Number.isFinite(winRate) ? pct(winRate) : "—"), "#1d4ed8")}
+          ${badge("PnL: " + fmtMoney(pnlTotal), pnlTotal >= 0 ? "#065f46" : "#7f1d1d")}
+        </div>
+        <div class="dashMeta">
+          Avg win: <b>${fmtMoney(avgWin)}</b> • Avg loss: <b>${fmtMoney(avgLoss)}</b> • Expectancy: <b>${fmtMoney(expectancy)}</b>
+        </div>
+      </div>
+
+      <div class="dashCol">
+        <div style="font-size:13px; margin-bottom:6px;"><b>Top estrategias (por PnL)</b></div>
+        <div class="dashTableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left;">Strat</th>
+                <th style="text-align:right;">PnL</th>
+                <th style="text-align:right;">#</th>
+                <th style="text-align:right;">WR</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${stratRows || `<tr><td colspan="4" style="padding:6px; opacity:.7;">—</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+
 
 // Reverse lookup por label (para trades viejos)
 const labelToStrategy = (() => {
@@ -297,6 +531,11 @@ function toSignedAmount(tipoSelectValue, amount) {
   return t === "DEBITO" ? -val : val;
 }
 
+function isStockLegFromInputs() {
+  const leg = safeUpper(pata?.value || "");
+  return leg === "STOCK";
+}
+
 function calcularResultadoFromInputs() {
   const qty = parseFloat(contratos?.value) || 0;
   const entradaSigned = toSignedAmount(entrada_tipo?.value, credito_debito?.value);
@@ -307,16 +546,27 @@ function calcularResultadoFromInputs() {
     return;
   }
 
-  const pnl = (entradaSigned + salidaSigned) * 100 * qty;
+  // STOCK: no multiplicador 100; Opciones: *100
+  const mult = isStockLegFromInputs() ? 1 : 100;
+  const pnl = (entradaSigned + salidaSigned) * mult * qty;
   if (resultado) resultado.value = Number.isFinite(pnl) ? pnl.toFixed(2) : "";
+}
+
+function isStockLeg(tradeLike) {
+  const leg = safeUpper(tradeLike.pata || tradeLike._pata || "");
+  return leg === "STOCK";
 }
 
 function computeEventPnL(tradeLike) {
   const qty = parseFloat(tradeLike.contratos) || 0;
   if (!qty) return "";
+
   const entradaSigned = toSignedAmount(tradeLike.entrada_tipo, tradeLike.credito_debito);
   const salidaSigned = toSignedAmount(tradeLike.salida_tipo, tradeLike.credito_debito_salida);
-  const pnl = (entradaSigned + salidaSigned) * 100 * qty;
+
+  const mult = isStockLeg(tradeLike) ? 1 : 100;
+  const pnl = (entradaSigned + salidaSigned) * mult * qty;
+
   return Number.isFinite(pnl) ? pnl.toFixed(2) : "";
 }
 
@@ -531,7 +781,9 @@ async function closeLegFromOpen(openTrade) {
   const salidaPrecio = prompt("Precio de salida para cerrar esta pata (ej: 0.08)", "");
   if (salidaPrecio === null) return;
 
-  const salidaTipoIn = prompt("Salida tipo: DEBITO o CREDITO", "DEBITO");
+    const suggestedClose = (String(openTrade.entrada_tipo || "").toUpperCase() === "DEBITO") ? "CREDITO" : "DEBITO";
+
+  const salidaTipoIn = prompt("Salida tipo: DEBITO o CREDITO", suggestedClose);
   if (salidaTipoIn === null) return;
   const salidaTipo = safeUpper(salidaTipoIn) === "CREDITO" ? "CREDITO" : "DEBITO";
 
@@ -1073,7 +1325,7 @@ timeline.forEach((t) => {
   const st = (t._estado || "").toUpperCase();
 
   // OPEN / ROLL_OPEN => abre una pata específica (por expiración+strike)
-  if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "")) {
+  if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "" || act === "BUY_STOCK")) {
     openSet.add(key);
     const arr = openStackByLeg.get(gk) || [];
     arr.push(key);
@@ -1081,7 +1333,7 @@ timeline.forEach((t) => {
   }
 
   // CLOSE / ROLL_CLOSE => cierra la ÚLTIMA pata abierta de ese (posId|pata)
-  if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE")) {
+  if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE" || act === "SELL_STOCK")) {
     const arr = openStackByLeg.get(gk) || [];
     const last = arr.pop();
     if (last) openSet.delete(last);
@@ -1104,7 +1356,13 @@ timeline.forEach((t) => {
 }); // ✅ ESTE CIERRE ES EL QUE TE FALTA
 
 
-    // ===== SPREAD GROUPS (PCS) =====
+    
+    // Anotar _isReallyOpen para dashboard / vista trades
+    items.forEach((t) => {
+      const hasPos = !!(t._posId && t._pata);
+      t._isReallyOpen = hasPos ? openSet.has(legKey(t)) : (t._estado === "OPEN");
+    });
+// ===== SPREAD GROUPS (PCS) =====
     const spreadGroups = {};
     items.forEach((t) => {
       if (!isSpreadStrategyId(t.estrategia_id)) return;
@@ -1155,6 +1413,9 @@ items.forEach((t) => {
   if (k > g.lastKey) g.lastKey = k;
 });
 
+
+    // Dashboard KPIs
+    try { renderDashboard(items); } catch (e) { console.warn('Dashboard error', e); }
 
     // ===== Render según modo =====
     const mode = viewMode?.value || "TRADES";

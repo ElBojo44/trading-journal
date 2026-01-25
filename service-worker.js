@@ -1,4 +1,4 @@
-const VERSION = "v43"; // cambia este valor cada vez que hagas cambios
+const VERSION = "v44"; // cambia este valor cada vez que hagas cambios
 
 self.addEventListener("install", () => {
   console.log("Service Worker instalado:", VERSION);
