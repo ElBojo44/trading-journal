@@ -162,6 +162,24 @@ function wrapBadges(htmlBadges) {
   return `<span style="float:right; display:flex; gap:6px; align-items:center; margin-top:2px;">${htmlBadges}</span>`;
 }
 
+// ---- Scroll helpers (volver arriba después de guardar/cerrar) ----
+let __scrollTopAfterNextRender = false;
+
+function requestScrollTop() {
+  __scrollTopAfterNextRender = true;
+  // también lo guardamos para cuando se "cierra/reabre" la app
+  try { sessionStorage.setItem("scrollTopOnLoad", "1"); } catch (e) {}
+}
+
+function scrollToTopNow() {
+  try {
+    window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+  } catch (e) {
+    try { window.scrollTo(0, 0); } catch (_) {}
+  }
+}
+
+
 
 // ---------- Dashboard KPI ----------
 function ensureDashboardContainer() {
@@ -1125,6 +1143,7 @@ const ghosts = items.filter(t =>
     }
 
     alert(`Listo ✅ Reparé ${ghosts.length} pata(s). Recargando...`);
+    requestScrollTop();
     setTimeout(cargarTrades, 750);
   } catch (err) {
     console.error(err);
@@ -1319,8 +1338,8 @@ form?.addEventListener("submit", async (e) => {
       syncNetModeVisibility();
       syncCCComboVisibility();
       renderEstrategiasForCategoria("");
-
-      setTimeout(cargarTrades, 650);
+    requestScrollTop();
+setTimeout(cargarTrades, 650);
     } catch (err) {
       console.error(err);
       alert("No se pudo guardar CC Combo. Mira la consola.");
@@ -1427,8 +1446,8 @@ form?.addEventListener("submit", async (e) => {
       syncTipoOpcionVisibility();
       syncNetModeVisibility();
       renderEstrategiasForCategoria("");
-
-      setTimeout(cargarTrades, 650);
+    requestScrollTop();
+setTimeout(cargarTrades, 650);
     } catch (err) {
       console.error(err);
       alert("No se pudo guardar multi-patas. Mira la consola.");
@@ -1498,6 +1517,7 @@ form?.addEventListener("submit", async (e) => {
     renderEstrategiasForCategoria("");
     syncNetModeVisibility();
 
+    requestScrollTop();
     setTimeout(cargarTrades, 650);
   } catch (err) {
     console.error(err);
@@ -1570,6 +1590,7 @@ async function closeLegFromOpen(openTrade) {
 
     // ✅ IMPORTANTÍSIMO: mandar limpio
     await apiPostNoCORS(cleanPayload(payload));
+    requestScrollTop();
 
 }
 
@@ -1616,6 +1637,9 @@ async function rollLegFromOpen(openTrade) {
     credito_debito_salida: closePrice,
     resultado: "",
   };
+  // ✅ fecha/hora de cierre reales (evita patas fantasmas por orden incorrecto)
+  rollClose.fecha = todayLocalISO();
+  rollClose.hora = getHoraAhoraHHMM();
   rollClose.resultado = computeEventPnL(rollClose);
 
   const rollOpen = {
@@ -1634,6 +1658,9 @@ async function rollLegFromOpen(openTrade) {
     credito_debito_salida: "",
     resultado: "",
   };
+
+  // ✅ fecha real para el nuevo OPEN (mismo día que el roll)
+  rollOpen.fecha = todayLocalISO();
 
 // Forzar campos clave + limpiar payload
 rollClose.position_id = posId;
@@ -1752,6 +1779,10 @@ async function closeAllLegsNet(openLegs, groupMeta = {}) {
     ...legs[0],
     _row: null,
     force_new: true,
+
+    // ✅ fecha/hora de cierre reales
+    fecha: todayLocalISO(),
+    hora: getHoraAhoraHHMM(),
 
     position_id: posId || legs[0].position_id || legs[0]._posId || "",
     pata: "SPREAD",
@@ -1931,7 +1962,8 @@ if (closeAllNetBtn) {
       try {
         if (el.classList.contains("closeLeg")) {
           await closeLegFromOpen(legEvent);
-          setTimeout(cargarTrades, 650);
+    requestScrollTop();
+setTimeout(cargarTrades, 650);
         } else if (el.classList.contains("rollLeg")) {
           await rollLegFromOpen(legEvent);
           setTimeout(cargarTrades, 700);
@@ -2002,6 +2034,10 @@ const payload = {
   ...shortLeg,
   _row: null,
   force_new: true,
+
+  // ✅ fecha/hora de cierre reales
+  fecha: todayLocalISO(),
+  hora: getHoraAhoraHHMM(),
 
   position_id: g.position_id,
   pata: "SPREAD",
@@ -2164,7 +2200,8 @@ function renderPositions(positionGroups) {
       closeShortBtn.addEventListener("click", async () => {
         try {
           await closeLegFromOpen(currentShort);
-          setTimeout(cargarTrades, 650);
+    requestScrollTop();
+setTimeout(cargarTrades, 650);
         } catch (err) {
           console.error(err);
           alert("No se pudo cerrar el short.");
@@ -2200,7 +2237,8 @@ function renderPositions(positionGroups) {
       try {
         if (el.classList.contains("closeLeg")) {
           await closeLegFromOpen(legEvent);
-          setTimeout(cargarTrades, 650);
+    requestScrollTop();
+setTimeout(cargarTrades, 650);
         } else if (el.classList.contains("rollLeg")) {
           await rollLegFromOpen(legEvent);
           setTimeout(cargarTrades, 700);
@@ -2588,6 +2626,12 @@ if (mode === "POSITIONS") {
       else if (pnl < 0) pnlCard.classList.add("negative");
       else pnlCard.classList.add("neutral");
     }
+
+    // Scroll arriba solo cuando una acción lo pidió
+    if (__scrollTopAfterNextRender) {
+      __scrollTopAfterNextRender = false;
+      scrollToTopNow();
+    }
   } catch (err) {
     console.error(err);
     alert("Error cargando trades. Mira la consola.");
@@ -2652,6 +2696,14 @@ function cargarTradeEnFormulario(t) {
 setFechaHoy();
 setHoraAhora();
 
+// Si la app se cerró/reabrió, arrancar arriba
+try {
+  if (sessionStorage.getItem("scrollTopOnLoad") === "1") {
+    sessionStorage.removeItem("scrollTopOnLoad");
+    scrollToTopNow();
+  }
+} catch (e) {}
+
 if (entrada_tipo) entrada_tipo.value = "CREDITO";
 if (salida_tipo) salida_tipo.value = "DEBITO";
 if (accion) accion.value = "OPEN";
@@ -2681,6 +2733,11 @@ try { renderLegsTable(); } catch (e) {}
   // Renombrar (aunque ya existiera)
   opt.textContent = "Ver: Posiciones (CC/PMCC)";
 })();
+
+// Marcar para que al reabrir arranque arriba
+window.addEventListener("beforeunload", () => {
+  try { sessionStorage.setItem("scrollTopOnLoad", "1"); } catch (e) {}
+});
 
 // Cargar al inicio
 cargarTrades();
