@@ -1075,7 +1075,21 @@ repairBtn?.addEventListener("click", async () => {
     const items = (state && Array.isArray(state.items)) ? state.items : [];
 
     // Fantasmas: eventos OPEN que ya no están realmente abiertos
-    const ghosts = items.filter(t => (t._estado === "OPEN") && !t._isReallyOpen && !!t._rowNum);
+    // Si ya existe un cierre NETO para un position_id, NO debemos "reparar" patas individuales,
+// porque eso puede inflar el PnL (doble conteo).
+const netClosedPosIds = new Set(
+  items
+    .filter(t => (t._estado === "CLOSED") && ["CLOSE_SPREAD","CLOSE_ALL_NET"].includes((t._accion || "").toUpperCase()))
+    .map(t => String(t._posId || "").trim())
+    .filter(Boolean)
+);
+
+const ghosts = items.filter(t =>
+  (t._estado === "OPEN") &&
+  !t._isReallyOpen &&
+  !!t._rowNum &&
+  !(t._posId && netClosedPosIds.has(String(t._posId).trim()))
+);
 
     if (!ghosts.length) {
       alert("No encontré patas fantasmas para reparar (en el rango actual). ✅");
@@ -1105,6 +1119,7 @@ repairBtn?.addEventListener("click", async () => {
         cierre_fecha: todayLocalISO(),
         // No tocamos resultado ni precios para no distorsionar PnL
         notas: (g.notas || "") + " [REPAIR: marcado CLOSED]",
+        resultado: "",
       };
         await apiPostNoCORS(cleanPayload(payload));
     }
@@ -2322,33 +2337,21 @@ timeline.forEach((t) => {
 
 
     // ✅ cierres netos:
-  // - CLOSE_SPREAD (legacy): mata 1 SHORT y 1 LONG (PCS/CCS)
-  // - CLOSE_ALL_NET: mata TODAS las patas abiertas del position_id (PCS/CCS/IC/IB, etc.)
-  if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
-    const pos = (t._posId || "").trim();
-    if (!pos) return;
+// - CLOSE_SPREAD / CLOSE_ALL_NET: el cierre neto representa el cierre TOTAL del position_id.
+//   Por eso matamos TODAS las patas abiertas de ese position_id (evita "patas fantasmas" y dobles conteos).
+if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
+  const pos = (t._posId || "").trim();
+  if (!pos) return;
 
-    if (act === "CLOSE_SPREAD") {
-      ["SHORT", "LONG"].forEach((leg) => {
-        const gk2 = `${pos}|${leg}`;
-        const arr2 = openStackByLeg.get(gk2) || [];
-        const last2 = arr2.pop();
-        if (last2) openSet.delete(last2);
-        openStackByLeg.set(gk2, arr2);
-      });
-      return;
+  for (const [gk2, arr2] of openStackByLeg.entries()) {
+    if (!gk2.startsWith(pos + "|")) continue;
+    while (arr2.length) {
+      const last2 = arr2.pop();
+      if (last2) openSet.delete(last2);
     }
-
-    // CLOSE_ALL_NET: limpiar todo lo que esté abierto bajo ese position_id
-    for (const [gk2, arr2] of openStackByLeg.entries()) {
-      if (!gk2.startsWith(pos + "|")) continue;
-      while (arr2.length) {
-        const last2 = arr2.pop();
-        if (last2) openSet.delete(last2);
-      }
-      openStackByLeg.set(gk2, arr2);
-    }
+    openStackByLeg.set(gk2, arr2);
   }
+}
 });
 
 
