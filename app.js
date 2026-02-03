@@ -36,6 +36,53 @@ const strategyCatalog = {
   ],
 };
 
+function cleanPayload(obj) {
+    const allowed = [
+        "fecha", "hora", "ticker", "broker",
+        "categoria", "estrategia_id", "estrategia", "sesgo", "tipo",
+        "expiracion", "strikes", "tipo_opcion",
+        "entrada_tipo", "credito_debito",
+        "salida_tipo", "credito_debito_salida",
+        "contratos", "resultado", "notas",
+        "estado", "cierre_fecha",
+        "position_id", "pata", "accion", "roll_group_id",
+        "force_new", "_row"
+    ];
+
+    const out = {};
+    allowed.forEach(k => {
+        if (obj[k] !== undefined) out[k] = obj[k];
+    });
+    return out;
+}
+
+
+function normalizarHora(h) {
+    if (!h) return "00:00";
+
+    // ISO tipo 1899-12-31T03:43:00.000Z
+    if (typeof h === "string" && h.includes("T")) {
+        const m = h.match(/T(\d{2}):(\d{2})/);
+        if (m) return `${m[1]}:${m[2]}`;
+    }
+
+    // "HH:mm:ss" o "HH:mm"
+    if (typeof h === "string" && /^\d{2}:\d{2}/.test(h)) {
+        return h.slice(0, 5);
+    }
+
+    // Date
+    const d = new Date(h);
+    if (!isNaN(d)) {
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        return `${hh}:${mm}`;
+    }
+
+    return "00:00";
+}
+
+
 const brokerLabels = {
   SIGMA_TRADE: "Sigma Trade",
   THINKORSWIM: "ThinkorSwim",
@@ -136,6 +183,26 @@ function badgePnL(pnlNum) {
   return badge(txt, bg);
 }
 
+// --- tiny styles for extra buttons (no depende de style.css) ---
+(function ensureExtraButtonStyles(){
+  if (document.getElementById("extraBtnStyles")) return;
+  const st = document.createElement("style");
+  st.id = "extraBtnStyles";
+  st.textContent = `
+    #repairBtn{
+      border:1px solid rgba(0,0,0,.15);
+      background:#fff;
+      border-radius:12px;
+      padding:8px 10px;
+      cursor:pointer;
+      font-size:13px;
+      white-space:nowrap;
+    }
+    #repairBtn:hover{ background:rgba(0,0,0,.03); }
+  `;
+  document.head.appendChild(st);
+})();
+
 function wrapBadges(htmlBadges) {
   return `<span style="float:right; display:flex; gap:6px; align-items:center; margin-top:2px;">${htmlBadges}</span>`;
 }
@@ -153,7 +220,7 @@ function ensureDashboardContainer() {
     st.id = "statsDashboardStyles";
     st.textContent = `
       #statsDashboard{
-        margin:12px 0 14px;
+        margin:12px auto 14px;
         border:1px solid rgba(0,0,0,.08);
         border-radius:12px;
         background:#fff;
@@ -398,8 +465,16 @@ function findCatIdByLabel(label) {
 
 function isSpreadStrategyId(estrategia_id) {
   const id = String(estrategia_id || "").toUpperCase();
-  // Empezamos con PCS. Luego añadimos CCS/IC.
-  return id === "PCS" || id === "PUT CREDIT SPREAD";
+  // Estrategias multi-pata (para agrupar en vista SPREADS)
+  return id === "PCS" || id === "CCS" || id === "IC" || id === "IB" ||
+         id === "PUT CREDIT SPREAD" || id === "CALL CREDIT SPREAD" ||
+         id === "IRON CONDOR" || id === "IRON BUTTERFLY";
+}
+
+// Para el checkbox "Guardar como NETO (1 precio)"
+function isMultiLegNettableStrategyId(estrategia_id) {
+  const id = String(estrategia_id || "").trim().toUpperCase();
+  return id === "PCS" || id === "CCS" || id === "IC" || id === "IB";
 }
 
 function isPositionStrategyId(estrategia_id) {
@@ -419,6 +494,107 @@ const historyRange = document.getElementById("historyRange");
 const brokerFilter = document.getElementById("brokerFilter");
 const tickerSearch = document.getElementById("tickerSearch");
 
+// extra UI
+const repairBtn = document.getElementById("repairBtn") || document.querySelector(".repairBtn");
+const netMode = document.getElementById("netMode");
+
+
+// ---------- CC Combo UI (abrir SHORT + STOCK en 1 paso) ----------
+let ccComboWrap = null;
+let ccComboEnabled = null;
+let ccShortPrice = null;
+let ccStockPrice = null;
+
+// Crea UI inline sin tocar index.html
+function ensureCCComboUI() {
+  if (ccComboWrap) return;
+  if (!form) return;
+
+  ccComboWrap = document.createElement("div");
+  ccComboWrap.id = "ccComboWrap";
+  ccComboWrap.style.cssText = "margin:10px 0; padding:10px; border:1px solid rgba(0,0,0,.12); border-radius:12px; display:none;";
+
+  ccComboWrap.innerHTML = `
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <label style="display:flex; gap:8px; align-items:center; font-size:13px; opacity:.92;">
+        <input type="checkbox" id="ccComboEnabled" />
+        Abrir CC + Acciones (2 patas)
+      </label>
+      <small style="opacity:.85; line-height:1.25;">
+        Entra el precio del <b>short call</b> y el precio de <b>las acciones</b> en un solo guardado.
+      </small>
+    </div>
+
+    <div style="display:grid; gap:10px; grid-template-columns: 1fr; margin-top:10px;">
+      <input type="number" step="0.01" id="ccShortPrice" placeholder="Precio short call (crédito) ej: 0.35" />
+      <input type="number" step="0.01" id="ccStockPrice" placeholder="Precio acciones (compra) ej: 420.15" />
+      <small style="opacity:.8; line-height:1.25;">
+        Nota: las acciones se guardan como <b>pata=STOCK</b> con qty = contratos*100.
+      </small>
+    </div>
+  `;
+
+  // Insertar justo antes de NETO (o antes de Entrada si NETO no existe)
+  const netLabel = document.querySelector('label input#netMode')?.closest("label");
+  if (netLabel) {
+    netLabel.insertAdjacentElement("beforebegin", ccComboWrap);
+  } else {
+    // fallback: antes de entrada_tipo
+    entrada_tipo?.insertAdjacentElement("beforebegin", ccComboWrap);
+  }
+
+  ccComboEnabled = ccComboWrap.querySelector("#ccComboEnabled");
+  ccShortPrice = ccComboWrap.querySelector("#ccShortPrice");
+  ccStockPrice = ccComboWrap.querySelector("#ccStockPrice");
+
+  ccComboEnabled?.addEventListener("change", syncCCComboMode);
+}
+
+// Muestra/oculta y deshabilita campos cuando aplica
+function syncCCComboVisibility() {
+  ensureCCComboUI();
+
+  const stratId = safeUpper(estrategia?.value || "");
+  const isCC = stratId === "CC";
+  if (ccComboWrap) ccComboWrap.style.display = isCC ? "block" : "none";
+
+  // Si no es CC, reset
+  if (!isCC && ccComboEnabled) {
+    ccComboEnabled.checked = false;
+    if (ccShortPrice) ccShortPrice.value = "";
+    if (ccStockPrice) ccStockPrice.value = "";
+  }
+
+  syncCCComboMode();
+}
+
+function syncCCComboMode() {
+  const stratId = safeUpper(estrategia?.value || "");
+  const isCC = stratId === "CC";
+  const on = !!(isCC && ccComboEnabled?.checked);
+
+  // En modo combo, forzamos que el trade sea OPEN y evitamos confusión
+  const disable = (el, v) => { if (el) el.disabled = !!v; };
+
+  // pata/tipo/entrada se setean internamente para cada pata
+  disable(pata, on);
+  disable(tipo_opcion, on);
+  disable(entrada_tipo, on);
+  disable(credito_debito, on);
+
+  // Acciones/estado forzados a OPEN en combo
+  if (on) {
+    if (accion) accion.value = "OPEN";
+    if (estado) estado.value = "OPEN";
+  }
+  disable(accion, on);
+  disable(estado, on);
+
+  // salida se deja libre (pero no se usa al abrir)
+  // Mantener expiración/strikes/contratos activos porque el short los usa
+}
+
+
 // NUEVOS filtros/vistas
 const statusView = document.getElementById("statusView"); // OPEN_ONLY / CLOSED_ONLY / ALL (si existe)
 const viewMode = document.getElementById("viewMode");     // TRADES / SPREADS (si existe)
@@ -435,12 +611,19 @@ const estrategia = document.getElementById("estrategia");
 // Nuevos campos
 const position_id = document.getElementById("position_id");
 const pata = document.getElementById("pata");
+const tipo_opcion = document.getElementById("tipo_opcion");
 const accion = document.getElementById("accion");
 const roll_group_id = document.getElementById("roll_group_id");
 
 const estado = document.getElementById("estado");
 const expiracion = document.getElementById("expiracion");
 const strikes = document.getElementById("strikes");
+
+// Multi-leg UI
+const multiLegWrap = document.getElementById("multiLegWrap");
+const multiLegEnabled = document.getElementById("multiLegEnabled");
+const genLegsBtn = document.getElementById("genLegsBtn");
+const legsTable = document.getElementById("legsTable");
 
 const entrada_tipo = document.getElementById("entrada_tipo");
 const credito_debito = document.getElementById("credito_debito");
@@ -475,6 +658,60 @@ function setHoraAhora() {
   const mm = String(d.getMinutes()).padStart(2, "0");
   hora.value = `${hh}:${mm}`;
 }
+
+function getHoraAhoraHHMM() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/** Normaliza hora para input type="time": HH:mm */
+function normalizarHora(h) {
+  if (!h) return "00:00";
+
+  // ISO tipo 1899-12-31T03:43:00.000Z
+  if (typeof h === "string" && h.includes("T")) {
+    const m = h.match(/T(\d{2}):(\d{2})/);
+    if (m) return `${m[1]}:${m[2]}`;
+  }
+
+  // "HH:mm:ss" o "HH:mm"
+  if (typeof h === "string" && /^\d{2}:\d{2}/.test(h)) {
+    return h.slice(0, 5);
+  }
+
+  // Date
+  const d = new Date(h);
+  if (!isNaN(d)) {
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  return "00:00";
+}
+
+/** Limpia payload: evita mandar campos internos (_*) al Apps Script */
+function cleanPayload(obj) {
+  const allowed = [
+    "fecha","hora","ticker","broker",
+    "categoria","estrategia_id","estrategia","sesgo","tipo",
+    "expiracion","strikes","tipo_opcion",
+    "entrada_tipo","credito_debito",
+    "salida_tipo","credito_debito_salida",
+    "contratos","resultado","notas",
+    "estado","cierre_fecha",
+    "position_id","pata","accion","roll_group_id",
+    "force_new","_row"
+  ];
+  const out = {};
+  allowed.forEach((k) => {
+    if (obj && Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+  });
+  return out;
+}
+
 
 function normalizarFecha(f) {
   if (!f) return "";
@@ -597,7 +834,230 @@ function renderEstrategiasForCategoria(catValue, selectedId = "") {
   });
 }
 
+function syncNetModeVisibility() {
+  if (!netMode) return;
+  const stratId = estrategia?.value || "";
+  const show = isMultiLegNettableStrategyId(stratId);
+  netMode.closest("label")?.style && (netMode.closest("label").style.display = show ? "block" : "none");
+  if (!show) netMode.checked = false;
+}
+
 categoria?.addEventListener("change", () => renderEstrategiasForCategoria(categoria.value));
+
+estrategia?.addEventListener("change", syncNetModeVisibility);
+
+// Mostrar/ocultar CALL/PUT según la pata
+function syncTipoOpcionVisibility() {
+  if (!tipo_opcion) return;
+  const leg = safeUpper(pata?.value || "");
+  const isStock = leg === "STOCK";
+  // si es stock, ocultamos y limpiamos
+  tipo_opcion.style.display = isStock ? "none" : "";
+  if (isStock) tipo_opcion.value = "";
+}
+
+pata?.addEventListener("change", syncTipoOpcionVisibility);
+
+// ---------- Multi-leg builder (Spreads / IC) ----------
+let multiLegDraft = []; // [{pata, tipo_opcion, strikes, entrada_tipo, defaultHint, entryPrice}]
+
+function isMultiLegEligibleStrategy(estrategia_id) {
+  const id = safeUpper(estrategia_id || "");
+  return id === "PCS" || id === "CCS" || id === "IC" || id === "IB";
+}
+
+function parseStrikesToLegs(estrategia_id, strikesText) {
+  const id = safeUpper(estrategia_id || "");
+  const raw = String(strikesText || "").trim();
+  if (!raw) return [];
+
+  // Normalize separators
+  const s = raw
+    .replaceAll("|", " ")
+    .replaceAll(",", " ")
+    .replaceAll("-", "/")
+    .replaceAll("\\", "/")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Helper: get number after label like SC:450 or S450
+  function pickLabeled(label) {
+    // Ej: SC:450, SP 430, S=440
+    const re = new RegExp(`${label}\\s*[:=]?\\s*(\\d+(?:\\.\\d+)?)`, "i");
+    const m = s.match(re);
+    return m ? m[1] : null;
+  }
+
+  // First try labeled formats
+  const labeled = {
+    SC: pickLabeled("SC"),
+    LC: pickLabeled("LC"),
+    SP: pickLabeled("SP"),
+    LP: pickLabeled("LP"),
+    S: pickLabeled("S"),
+    L: pickLabeled("L"),
+  };
+
+  // Then try plain numbers list (e.g. 440/435 or 450/455/430/425)
+  const nums = s
+    .split(/[\s/]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => x.replace(/[^0-9.]/g, ""))
+    .filter((x) => x && !isNaN(Number(x)));
+
+  const legs = [];
+
+  if (id === "PCS" || id === "CCS") {
+    const shortK = labeled.S || nums[0] || null;
+    const longK = labeled.L || nums[1] || null;
+    if (!shortK || !longK) return [];
+    const optType = id === "PCS" ? "PUT" : "CALL";
+    legs.push({ pata: "SHORT", tipo_opcion: optType, strikes: String(shortK), entrada_tipo: "CREDITO", defaultHint: "Short (crédito)" });
+    legs.push({ pata: "LONG",  tipo_opcion: optType, strikes: String(longK),  entrada_tipo: "DEBITO",  defaultHint: "Long (débito)" });
+    return legs;
+  }
+
+  if (id === "IC" || id === "IB") {
+    const sc = labeled.SC || nums[0] || null;
+    const lc = labeled.LC || nums[1] || null;
+    const sp = labeled.SP || nums[2] || null;
+    const lp = labeled.LP || nums[3] || null;
+    if (!sc || !lc || !sp || !lp) return [];
+    // Calls
+    legs.push({ pata: "SHORT", tipo_opcion: "CALL", strikes: String(sc), entrada_tipo: "CREDITO", defaultHint: "Short Call (crédito)" });
+    legs.push({ pata: "LONG",  tipo_opcion: "CALL", strikes: String(lc), entrada_tipo: "DEBITO",  defaultHint: "Long Call (débito)" });
+    // Puts
+    legs.push({ pata: "SHORT", tipo_opcion: "PUT",  strikes: String(sp), entrada_tipo: "CREDITO", defaultHint: "Short Put (crédito)" });
+    legs.push({ pata: "LONG",  tipo_opcion: "PUT",  strikes: String(lp), entrada_tipo: "DEBITO",  defaultHint: "Long Put (débito)" });
+    return legs;
+  }
+
+  return [];
+}
+
+function renderLegsTable() {
+  if (!legsTable) return;
+  if (!multiLegEnabled?.checked) {
+    legsTable.innerHTML = "";
+    return;
+  }
+  if (!multiLegDraft.length) {
+    legsTable.innerHTML = `<div style="padding:8px; opacity:.8;">Escribe los strikes y toca <b>Generar patas</b>.</div>`;
+    return;
+  }
+
+  const rows = multiLegDraft
+    .map((l, i) => {
+      const hint = escHtml(l.defaultHint || "");
+      const pataTxt = escHtml(l.pata);
+      const tipoTxt = escHtml(l.tipo_opcion);
+      const strikeTxt = escHtml(l.strikes);
+      const et = escHtml(l.entrada_tipo);
+      const val = l.entryPrice != null ? String(l.entryPrice) : "";
+      return `
+        <tr>
+          <td style="white-space:nowrap;"><b>${pataTxt}</b></td>
+          <td style="white-space:nowrap;">${tipoTxt}</td>
+          <td style="white-space:nowrap;">${strikeTxt}</td>
+          <td style="white-space:nowrap;">${et}</td>
+          <td style="min-width:140px;">
+            <input data-leg-idx="${i}" class="legEntry" type="number" step="0.01" placeholder="precio" value="${escHtml(val)}" style="width:100%; padding:8px; border-radius:10px; border:1px solid rgba(0,0,0,.2);" />
+            <div style="font-size:12px; opacity:.75; margin-top:4px;">${hint}</div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  legsTable.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:520px;">
+      <thead style="opacity:.85;">
+        <tr>
+          <th style="text-align:left; padding:6px 6px;">Pata</th>
+          <th style="text-align:left; padding:6px 6px;">Tipo</th>
+          <th style="text-align:left; padding:6px 6px;">Strike</th>
+          <th style="text-align:left; padding:6px 6px;">Entrada</th>
+          <th style="text-align:left; padding:6px 6px;">Precio entrada</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  `;
+
+  // capture inputs
+  legsTable.querySelectorAll(".legEntry").forEach((inp) => {
+    inp.addEventListener("input", (ev) => {
+      const el = ev.target;
+      const idx = Number(el.getAttribute("data-leg-idx"));
+      if (!Number.isFinite(idx) || !multiLegDraft[idx]) return;
+      multiLegDraft[idx].entryPrice = el.value;
+    });
+  });
+}
+
+function refreshMultiLegVisibility() {
+  const stratId = safeUpper(estrategia?.value || "");
+  const isEligible = isMultiLegEligibleStrategy(stratId);
+  if (multiLegWrap) multiLegWrap.style.display = isEligible ? "block" : "none";
+
+  // Neto y multi-leg son mutuamente excluyentes
+  if (!isEligible) {
+    if (multiLegEnabled) multiLegEnabled.checked = false;
+    multiLegDraft = [];
+    renderLegsTable();
+    return;
+  }
+
+  if (netMode?.checked && multiLegEnabled?.checked) {
+    multiLegEnabled.checked = false;
+    multiLegDraft = [];
+    renderLegsTable();
+  }
+}
+
+estrategia?.addEventListener("change", refreshMultiLegVisibility);
+estrategia?.addEventListener("change", syncCCComboVisibility);
+netMode?.addEventListener("change", () => {
+  // si neto se activa, apagar multi
+  if (netMode.checked && multiLegEnabled) {
+    multiLegEnabled.checked = false;
+    multiLegDraft = [];
+    renderLegsTable();
+  }
+});
+
+multiLegEnabled?.addEventListener("change", () => {
+  if (multiLegEnabled.checked && netMode) netMode.checked = false;
+  if (!multiLegEnabled.checked) multiLegDraft = [];
+
+  const on = !!multiLegEnabled.checked;
+  // Evitar confusión: en multi-patas siempre abrimos
+  if (on) {
+    if (accion) accion.value = "OPEN";
+    if (estado) estado.value = "OPEN";
+  }
+  // Deshabilitar campos que se vuelven “por pata”
+  [pata, tipo_opcion, accion, entrada_tipo, credito_debito, salida_tipo, credito_debito_salida].forEach((el) => {
+    if (!el) return;
+    el.disabled = on;
+  });
+
+  renderLegsTable();
+});
+
+genLegsBtn?.addEventListener("click", () => {
+  const stratId = safeUpper(estrategia?.value || "");
+  const legs = parseStrikesToLegs(stratId, strikes?.value || "");
+  if (!legs.length) {
+    alert("No pude entender los strikes. Usa por ejemplo: PCS 440/435 o IC 450/455/430/425.");
+    return;
+  }
+  multiLegDraft = legs.map((x) => ({ ...x, entryPrice: "" }));
+  renderLegsTable();
+});
 
 // ---------- JSONP GET (sin CORS) ----------
 function apiGetJSONP() {
@@ -648,6 +1108,60 @@ tickerSearch?.addEventListener("input", () => cargarTrades());
 statusView?.addEventListener("change", () => cargarTrades());
 viewMode?.addEventListener("change", () => cargarTrades());
 
+// ---------- Reparar (cierra fantasmas en Google Sheet) ----------
+repairBtn?.addEventListener("click", async () => {
+  try {
+    // Usamos el último estado calculado para evitar inconsistencias
+    const st = window.__lastJournalState;
+    if (!st || !Array.isArray(st.items)) {
+      await cargarTrades();
+    }
+    const state = window.__lastJournalState;
+    const items = (state && Array.isArray(state.items)) ? state.items : [];
+
+    // Fantasmas: eventos OPEN que ya no están realmente abiertos
+    const ghosts = items.filter(t => (t._estado === "OPEN") && !t._isReallyOpen && !!t._rowNum);
+
+    if (!ghosts.length) {
+      alert("No encontré patas fantasmas para reparar (en el rango actual). ✅");
+      return;
+    }
+
+    const preview = ghosts
+      .slice(0, 12)
+      .map(g => `${g._tickerUp} | pos:${g._posId} | pata:${g._pata} | exp:${normalizarFecha(g.expiracion)||"—"} | strike:${g.strikes||"—"}`)
+      .join("\n");
+
+    const ok = confirm(
+      `Encontré ${ghosts.length} pata(s) fantasma(s).\n\n` +
+      `Esto va a marcar ESOS OPEN como CLOSED en Google Sheet (sin tocar PnL).\n\n` +
+      `Muestra (máx 12):\n${preview}\n\n` +
+      `¿Reparar ahora?`
+    );
+    if (!ok) return;
+
+    for (const g of ghosts) {
+      // Editar la fila original (no creamos un evento nuevo)
+      const payload = {
+        ...g,
+        _row: g._rowNum,
+        force_new: false,
+        estado: "CLOSED",
+        cierre_fecha: todayLocalISO(),
+        // No tocamos resultado ni precios para no distorsionar PnL
+        notas: (g.notas || "") + " [REPAIR: marcado CLOSED]",
+      };
+        await apiPostNoCORS(cleanPayload(payload));
+    }
+
+    alert(`Listo ✅ Reparé ${ghosts.length} pata(s). Recargando...`);
+    setTimeout(cargarTrades, 750);
+  } catch (err) {
+    console.error(err);
+    alert("No se pudo ejecutar Reparar. Mira la consola.");
+  }
+});
+
 // ---------- submit ----------
 form?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -671,20 +1185,285 @@ form?.addEventListener("submit", async (e) => {
   let accionVal = safeUpper(accion?.value || "OPEN");
   let pataVal = safeUpper(pata?.value || "");
 
+  // Modo NETO (1 precio) => guardamos como una sola "pata" SPREAD
+  if (netMode?.checked && isMultiLegNettableStrategyId(stratKey)) {
+    if (accionVal === "ROLL_CLOSE" || accionVal === "ROLL_OPEN") {
+      alert("En modo NETO no se usa ROLL. Desmarca NETO o guarda pata por pata.");
+      return;
+    }
+    pataVal = "SPREAD";
+    if (tipo_opcion) tipo_opcion.value = "";
+  }
+
   // Para DIAGONAL/CC default SHORT; para spreads también
-  if (!pataVal && (stratKey === "DIAGONAL" || stratKey === "CC" || stratKey === "PCS")) pataVal = "SHORT";
+    if (!pataVal && (stratKey === "DIAGONAL" || stratKey === "CC" || stratKey === "CSP" || stratKey === "PCS" || stratKey === "CCS" || stratKey === "IC" || stratKey === "IB")) pataVal = "SHORT";
 
   let posIdVal = (position_id?.value || "").trim();
 
   // Generar position_id para DIAGONAL/CC/SPREADS cuando abres
-  const needsPos = (stratKey === "DIAGONAL" || stratKey === "CC" || stratKey === "PCS");
-  if (!posIdVal && accionVal === "OPEN" && needsPos) {
-    posIdVal = generatePositionId({
+    const needsPos = (stratKey === "DIAGONAL" || stratKey === "CC" || stratKey === "CSP" || stratKey === "PCS" || stratKey === "CCS" || stratKey === "IC" || stratKey === "IB");
+    if (!posIdVal && accionVal === "OPEN" && needsPos) {
+      posIdVal = generatePositionId({
       tk: safeUpper(ticker?.value || "TICKER"),
       stratId: stratKey,
       fechaISO: fecha?.value || todayLocalISO(),
     });
     if (position_id) position_id.value = posIdVal;
+  }
+
+  
+  // ===== CC Combo (abre SHORT CALL + STOCK en 1 paso) =====
+  const ccComboOn = (stratKey === "CC" && !!ccComboEnabled?.checked);
+
+  if (ccComboOn) {
+    // Solo crear (no editar) y solo OPEN
+    if (editRow != null) {
+      alert("CC Combo solo funciona para CREAR una nueva posición (no editar).");
+      return;
+    }
+    if (accionVal !== "OPEN") {
+      alert("CC Combo solo soporta ACCIÓN=OPEN.");
+      return;
+    }
+    if (safeUpper(estado?.value || "OPEN") !== "OPEN") {
+      alert("CC Combo es para abrir. Estado debe ser OPEN.");
+      return;
+    }
+
+    const shortPx = Number(ccShortPrice?.value);
+    const stockPx = Number(ccStockPrice?.value);
+    const qtyOpt = Number(contratos?.value);
+
+    if (!Number.isFinite(shortPx) || shortPx <= 0) {
+      alert("Falta el precio del short call (crédito).");
+      return;
+    }
+    if (!Number.isFinite(stockPx) || stockPx <= 0) {
+      alert("Falta el precio de las acciones (compra).");
+      return;
+    }
+    if (!Number.isFinite(qtyOpt) || qtyOpt <= 0) {
+      alert("Contratos inválidos. Ej: 1");
+      return;
+    }
+
+    // Acciones = contratos * 100
+    const qtyStock = qtyOpt * 100;
+
+    // Validación mínima para el short call
+    if (!expiracion?.value) {
+      const ok = confirm("No veo expiración. ¿Quieres guardar el CC Combo sin expiración?");
+      if (!ok) return;
+    }
+    if (!(String(strikes?.value || "").trim())) {
+      const ok = confirm("No veo strike(s). ¿Quieres guardar el CC Combo sin strike?");
+      if (!ok) return;
+    }
+
+    // Asegurar position_id
+    if (!posIdVal) {
+      posIdVal = generatePositionId({
+        tk: safeUpper(ticker?.value || "TICKER"),
+        stratId: stratKey,
+        fechaISO: fecha?.value || todayLocalISO(),
+      });
+      if (position_id) position_id.value = posIdVal;
+    }
+
+    const common = {
+      fecha: fecha?.value || "",
+      hora: hora?.value || "",
+      ticker: safeUpper(ticker?.value || ""),
+      broker: broker?.value || "",
+
+      categoria: cat,
+      estrategia_id: strat.id,
+      estrategia: strat.label,
+      sesgo: strat.sesgo,
+      tipo: strat.tipo,
+
+      estado: "OPEN",
+      cierre_fecha: "",
+
+      position_id: posIdVal,
+      roll_group_id: "",
+      force_new: true,
+      _row: null,
+
+      notas: notas?.value || "",
+    };
+
+    // 1) SHORT CALL
+    const shortLeg = {
+      ...common,
+      pata: "SHORT",
+      tipo_opcion: "CALL",
+      accion: "OPEN",
+      expiracion: expiracion?.value || "",
+      strikes: String(strikes?.value || "").trim(),
+      entrada_tipo: "CREDITO",
+      credito_debito: shortPx.toFixed(2),
+      salida_tipo: "DEBITO",
+      credito_debito_salida: "",
+      contratos: qtyOpt,
+      resultado: "",
+    };
+
+    // 2) STOCK (compra)
+    const stockLeg = {
+      ...common,
+      pata: "STOCK",
+      tipo_opcion: "",
+      accion: "BUY_STOCK",
+      expiracion: "",
+      strikes: "",
+      entrada_tipo: "DEBITO",
+      credito_debito: stockPx.toFixed(2),
+      salida_tipo: "CREDITO",
+      credito_debito_salida: "",
+      contratos: qtyStock, // shares
+      resultado: "",
+    };
+
+    try {
+      await apiPostNoCORS(cleanPayload(shortLeg));
+      await apiPostNoCORS(cleanPayload(stockLeg));
+
+      // Reset
+      form.reset();
+      setFechaHoy();
+      setHoraAhora();
+      if (accion) accion.value = "OPEN";
+      if (entrada_tipo) entrada_tipo.value = "CREDITO";
+      if (salida_tipo) salida_tipo.value = "DEBITO";
+      if (position_id) position_id.value = "";
+      if (roll_group_id) roll_group_id.value = "";
+      if (tipo_opcion) tipo_opcion.value = "";
+
+      // Limpia CC combo
+      if (ccComboEnabled) ccComboEnabled.checked = false;
+      if (ccShortPrice) ccShortPrice.value = "";
+      if (ccStockPrice) ccStockPrice.value = "";
+
+      syncTipoOpcionVisibility();
+      syncNetModeVisibility();
+      syncCCComboVisibility();
+      renderEstrategiasForCategoria("");
+
+      setTimeout(cargarTrades, 650);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo guardar CC Combo. Mira la consola.");
+    }
+    return; // ✅ no seguir al guardado normal
+  }
+
+// ===== Multi-patas (1 trade => varias filas) =====
+  const multiOn = !!(multiLegEnabled?.checked && isMultiLegEligibleStrategy(stratKey) && !netMode?.checked);
+  if (multiOn) {
+    // Solo creación (no edición) y solo OPEN
+    if (editRow != null) {
+      alert("Multi-patas solo funciona para CREAR nuevos trades (no editar).\nCrea uno nuevo o desmarca Multi-patas.");
+      return;
+    }
+    if (accionVal !== "OPEN") {
+      alert("Multi-patas solo soporta ACCIÓN=OPEN. Para cerrar, usa 'Cerrar pata' en la lista.");
+      return;
+    }
+    if (safeUpper(estado?.value || "OPEN") !== "OPEN") {
+      alert("Multi-patas es para abrir. Para cerrar, usa 'Cerrar pata'.");
+      return;
+    }
+
+    // Generar patas si no están generadas todavía
+    if (!multiLegDraft.length) {
+      const legs = parseStrikesToLegs(stratKey, strikes?.value || "");
+      if (!legs.length) {
+        alert("No pude entender los strikes. Usa por ejemplo: PCS 440/435 o IC 450/455/430/425.");
+        return;
+      }
+      multiLegDraft = legs.map((x) => ({ ...x, entryPrice: "" }));
+      renderLegsTable();
+      alert("Te generé las patas. Ahora llena el precio de entrada por pata y vuelve a Guardar.");
+      return;
+    }
+
+    // Validar precios por pata
+    const missing = multiLegDraft.filter((l) => !(String(l.entryPrice ?? "").trim()));
+    if (missing.length) {
+      alert("Faltan precios de entrada en una o más patas.\nLlena todos los precios y guarda.");
+      return;
+    }
+
+    // Crear una fila por pata
+    const common = {
+      fecha: fecha?.value || "",
+      hora: hora?.value || "",
+      ticker: safeUpper(ticker?.value || ""),
+      broker: broker?.value || "",
+
+      categoria: cat,
+      estrategia_id: strat.id,
+      estrategia: strat.label,
+      sesgo: strat.sesgo,
+      tipo: strat.tipo,
+
+      expiracion: expiracion?.value || "",
+      contratos: contratos?.value || "",
+
+      salida_tipo: "DEBITO",
+      credito_debito_salida: "",
+      resultado: "",
+
+      notas: notas?.value || "",
+
+      estado: "OPEN",
+      cierre_fecha: "",
+
+      position_id: posIdVal,
+      accion: "OPEN",
+      roll_group_id: "",
+      force_new: true,
+
+      _row: null,
+    };
+
+    try {
+      for (const leg of multiLegDraft) {
+        const payload = {
+          ...common,
+          pata: safeUpper(leg.pata),
+          tipo_opcion: safeUpper(leg.tipo_opcion),
+          strikes: String(leg.strikes || "").trim(),
+          entrada_tipo: safeUpper(leg.entrada_tipo),
+          credito_debito: String(leg.entryPrice).trim(),
+        };
+          await apiPostNoCORS(cleanPayload(payload));
+      }
+
+      // Reset
+      form.reset();
+      setFechaHoy();
+      setHoraAhora();
+      if (accion) accion.value = "OPEN";
+      if (entrada_tipo) entrada_tipo.value = "CREDITO";
+      if (salida_tipo) salida_tipo.value = "DEBITO";
+      if (position_id) position_id.value = "";
+      if (tipo_opcion) tipo_opcion.value = "";
+      if (netMode) netMode.checked = false;
+      if (multiLegEnabled) multiLegEnabled.checked = false;
+      multiLegDraft = [];
+      renderLegsTable();
+      syncTipoOpcionVisibility();
+      syncNetModeVisibility();
+      renderEstrategiasForCategoria("");
+
+      setTimeout(cargarTrades, 650);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo guardar multi-patas. Mira la consola.");
+    }
+    return; // ✅ important: no seguir con guardado normal
   }
 
   const est = safeUpper(estado?.value || "OPEN");
@@ -702,6 +1481,7 @@ form?.addEventListener("submit", async (e) => {
 
     expiracion: expiracion?.value || "",
     strikes: strikes?.value || "",
+    tipo_opcion: safeUpper(tipo_opcion?.value || ""), // CALL / PUT (vacío si STOCK)
 
     entrada_tipo: safeUpper(entrada_tipo?.value || "CREDITO"),
     credito_debito: credito_debito?.value || "",
@@ -740,10 +1520,13 @@ form?.addEventListener("submit", async (e) => {
     if (accion) accion.value = "OPEN";
     if (position_id) position_id.value = "";
     if (roll_group_id) roll_group_id.value = "";
+    if (tipo_opcion) tipo_opcion.value = "";
+    syncTipoOpcionVisibility();
     calcularResultadoFromInputs();
 
     if (categoria) categoria.value = "";
     renderEstrategiasForCategoria("");
+    syncNetModeVisibility();
 
     setTimeout(cargarTrades, 650);
   } catch (err) {
@@ -763,10 +1546,13 @@ cancelBtn?.addEventListener("click", () => {
   if (accion) accion.value = "OPEN";
   if (position_id) position_id.value = "";
   if (roll_group_id) roll_group_id.value = "";
+  if (tipo_opcion) tipo_opcion.value = "";
+  syncTipoOpcionVisibility();
   calcularResultadoFromInputs();
 
   if (categoria) categoria.value = "";
   renderEstrategiasForCategoria("");
+  syncNetModeVisibility();
 });
 
 // ---------- UI actions: crear evento CLOSE desde un OPEN ----------
@@ -787,23 +1573,34 @@ async function closeLegFromOpen(openTrade) {
   if (salidaTipoIn === null) return;
   const salidaTipo = safeUpper(salidaTipoIn) === "CREDITO" ? "CREDITO" : "DEBITO";
 
-  const payload = {
-    ...openTrade,
-    _row: null,
-    force_new: true,
+    const payload = {
+        ...openTrade,
+        _row: null,
+        force_new: true,
 
-    accion: "CLOSE",
-    estado: "CLOSED",
-    cierre_fecha: todayLocalISO(),
+        // ✅ usa fecha/hora de cierre reales
+        fecha: todayLocalISO(),
+        hora: getHoraAhoraHHMM(),
 
-    salida_tipo: salidaTipo,
-    credito_debito_salida: salidaPrecio,
+        // ✅ fuerza claves
+        position_id: posId,
+        pata: leg,
 
-    resultado: "",
-  };
+        accion: "CLOSE",
+        estado: "CLOSED",
+        cierre_fecha: todayLocalISO(),
 
-  payload.resultado = computeEventPnL(payload);
-  await apiPostNoCORS(payload);
+        salida_tipo: salidaTipo,
+        credito_debito_salida: salidaPrecio,
+
+        resultado: "",
+    };
+
+    payload.resultado = computeEventPnL(payload);
+
+    // ✅ IMPORTANTÍSIMO: mandar limpio
+    await apiPostNoCORS(cleanPayload(payload));
+
 }
 
 // ---------- UI actions: roll pata (crea 2 eventos) ----------
@@ -868,8 +1665,150 @@ async function rollLegFromOpen(openTrade) {
     resultado: "",
   };
 
-  await apiPostNoCORS(rollClose);
-  await apiPostNoCORS(rollOpen);
+// Forzar campos clave + limpiar payload
+rollClose.position_id = posId;
+rollClose.pata = leg;
+rollClose.hora = getHoraAhoraHHMM();
+
+// Asegura que el ROLL_OPEN quede después del ROLL_CLOSE en el timeline
+const dtmp = new Date();
+dtmp.setMinutes(dtmp.getMinutes() + 1);
+const hh2 = String(dtmp.getHours()).padStart(2, "0");
+const mm2 = String(dtmp.getMinutes()).padStart(2, "0");
+rollOpen.position_id = posId;
+rollOpen.pata = leg;
+rollOpen.hora = `${hh2}:${mm2}`;
+
+await apiPostNoCORS(cleanPayload(rollClose));
+await apiPostNoCORS(cleanPayload(rollOpen));
+
+}
+
+
+// ---------- UI actions: cerrar TODAS las patas abiertas de una posición ----------
+async function closeAllLegsSequential(openLegs, label = "") {
+  const legs = Array.isArray(openLegs) ? openLegs.filter(Boolean) : [];
+  if (!legs.length) {
+    alert("No hay patas abiertas para cerrar.");
+    return;
+  }
+
+  const title = label ? `\n\n${label}` : "";
+  if (!confirm(`Vas a cerrar ${legs.length} pata(s) una por una.${title}\n\n¿Continuar?`)) return;
+
+  // Cerramos en orden: SHORT primero, luego LONG, luego lo demás (por orden natural)
+  const orderRank = (p) => {
+    const x = String(p || "").toUpperCase();
+    if (x === "SHORT" || x === "SHORT_CALL" || x === "SHORT_PUT") return 1;
+    if (x === "LONG" || x === "LONG_CALL" || x === "LONG_PUT") return 2;
+    if (x === "SPREAD") return 3;
+    return 4;
+  };
+
+  legs.sort((a, b) => orderRank(a._pata || a.pata) - orderRank(b._pata || b.pata));
+
+  for (const leg of legs) {
+    try {
+      // closeLegFromOpen ya pide precio y tipo de salida y calcula PnL
+      await closeLegFromOpen(leg);
+    } catch (err) {
+      console.error(err);
+      alert("Se detuvo el cierre en lote por un error. Revisa consola.");
+      return;
+    }
+  }
+}
+
+
+
+
+// ---------- NETO: cerrar TODAS las patas abiertas con 1 solo precio ----------
+async function closeAllLegsNet(openLegs, groupMeta = {}) {
+  const legs = Array.isArray(openLegs) ? openLegs.filter(Boolean) : [];
+  if (!legs.length) {
+    alert("No hay patas abiertas para cerrar.");
+    return;
+  }
+
+  // Si ya es NETO (pata=SPREAD) y solo hay una, usamos el cierre normal (1 prompt)
+  if (legs.length === 1 && safeUpper(legs[0]._pata || legs[0].pata) === "SPREAD") {
+    await closeLegFromOpen(legs[0]);
+    return;
+  }
+
+  const posId = String(groupMeta.position_id || legs[0].position_id || legs[0]._posId || "").trim();
+  const tk = String(groupMeta.ticker || legs[0].ticker || legs[0]._tickerUp || "").trim();
+  const title = `${tk || ""} • ${posId || ""}`.trim();
+
+  const signedEntry = (e) => {
+    const px = Number(e.credito_debito || 0);
+    const et = safeUpper(e.entrada_tipo || "CREDITO");
+    return et === "DEBITO" ? -px : px;
+  };
+
+  const netEntry = legs.reduce((s, e) => s + signedEntry(e), 0);
+  const qty = Number(legs[0].contratos || 1) || 1;
+
+  const netOutStr = prompt(
+    `Cerrar TODAS NETO (1 precio)\n${title}\n\nEntrada neta: ${netEntry.toFixed(2)}\nQty: ${qty}\n\nPrecio neto de salida (ej: 1.20):`,
+    ""
+  );
+  if (netOutStr === null) return;
+
+  const netOut = Number(netOutStr);
+  if (!Number.isFinite(netOut) || netOut < 0) {
+    alert("Precio de salida inválido.");
+    return;
+  }
+
+  const suggestedOut = netEntry >= 0 ? "DEBITO" : "CREDITO";
+  const outTypeIn = prompt("Tipo de salida: DEBITO o CREDITO", suggestedOut);
+  if (outTypeIn === null) return;
+  const outType = safeUpper(outTypeIn) === "CREDITO" ? "CREDITO" : "DEBITO";
+
+  if (!confirm(`Confirmar cierre NETO de TODAS las patas (${legs.length})?\n${title}`)) return;
+
+  const legsSummary = legs.map((e) => {
+    const p = safeUpper(e._pata || e.pata || "");
+    const to = safeUpper(e._tipoOpcion || e.tipo_opcion || "");
+    const st = String(e.strikes || "").trim();
+    return `${p}${to ? "-" + to : ""}:${st || "—"}`;
+  }).join(" | ");
+
+  const entradaTipo = netEntry >= 0 ? "CREDITO" : "DEBITO";
+  const entradaVal = Math.abs(netEntry);
+
+  const payload = {
+    ...legs[0],
+    _row: null,
+    force_new: true,
+
+    position_id: posId || legs[0].position_id || legs[0]._posId || "",
+    pata: "SPREAD",
+    accion: "CLOSE_ALL_NET",
+    estado: "CLOSED",
+    cierre_fecha: todayLocalISO(),
+
+    entrada_tipo: entradaTipo,
+    credito_debito: entradaVal.toFixed(2),
+
+    salida_tipo: outType,
+    credito_debito_salida: netOut.toFixed(2),
+
+    strikes: legsSummary,
+    expiracion: legs[0].expiracion || "",
+
+    contratos: qty,
+    resultado: "",
+    notas: (legs[0].notas || "") + " [Cierre NETO: todas]",
+  };
+  // Forzar campos clave (evita CLOSE que no mate el OPEN) + hora estable
+  payload.position_id = posId;
+  payload.pata = "SPREAD";
+  payload.hora = getHoraAhoraHHMM();
+
+  payload.resultado = computeEventPnL(payload);
+  await apiPostNoCORS(cleanPayload(payload));
 }
 
 // ---------- Vista spreads (PCS) ----------
@@ -899,6 +1838,12 @@ function renderSpreads(spreadGroups) {
     const openLegs = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
     const isOpen = openLegs.length > 0;
 
+    const stratId = String(legs[0]?.estrategia_id || "").toUpperCase();
+    const openSpreadLeg = openLegs.find(e => (e._pata || "").toUpperCase() === "SPREAD") || null;
+    // Si es PCS/CCS con patas separadas, mantenemos el botón neto existente.
+    // Si se guardó en modo NETO (pata=SPREAD), cerraremos esa pata directamente.
+    const canNetClose = isOpen && ((stratId === "PCS" || stratId === "CCS") || !!openSpreadLeg);
+
     const expCommon = legs[0]?.expiracion ? normalizarFecha(legs[0].expiracion) : "—";
     const qtyCommon = legs[0]?.contratos || "—";
 
@@ -924,7 +1869,9 @@ function renderSpreads(spreadGroups) {
 
       <div class="rowBtns">
         <button type="button" class="toggle">Ver patas</button>
-        ${isOpen ? '<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>' : ""}
+        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""},
+        ${isOpen ? '<button type="button" class="closeAllNet">Cerrar todas (Neto)</button>' : ""},
+        ${canNetClose ? '<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>' : ""}
       </div>
 
       <div class="events" style="display:none; margin-top:8px;"></div>
@@ -968,6 +1915,37 @@ function renderSpreads(spreadGroups) {
       toggleBtn.textContent = isHidden ? "Ocultar patas" : "Ver patas";
     });
 
+
+    // Cerrar todas las patas abiertas (una por una)
+    const closeAllBtn = li.querySelector(".closeAllLegs");
+    if (closeAllBtn) {
+      closeAllBtn.addEventListener("click", async () => {
+        const openLegsNow = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
+        try {
+          await closeAllLegsSequential(openLegsNow, `${g.ticker} • ${g.position_id}`);
+          setTimeout(cargarTrades, 850);
+        } catch (err) {
+          console.error(err);
+          alert("No se pudieron cerrar todas las patas.");
+        }
+      });
+    }
+
+
+const closeAllNetBtn = li.querySelector(".closeAllNet");
+if (closeAllNetBtn) {
+  closeAllNetBtn.addEventListener("click", async () => {
+    const openLegsNow = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
+    try {
+      await closeAllLegsNet(openLegsNow, { ticker: g.ticker, position_id: g.position_id });
+      setTimeout(cargarTrades, 850);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo cerrar NETO (todas las patas).");
+    }
+  });
+}
+
     // Delegación para cerrar/roll desde el listado de patas
     eventsDiv.addEventListener("click", async (ev) => {
       const el = ev.target;
@@ -998,6 +1976,18 @@ function renderSpreads(spreadGroups) {
     const closeSpreadNetBtn = li.querySelector(".closeSpreadNet");
     if (closeSpreadNetBtn) {
       closeSpreadNetBtn.addEventListener("click", async () => {
+        // Si la posición se guardó en modo NETO (pata=SPREAD), cerramos esa pata.
+        if (openSpreadLeg) {
+          try {
+            await closeLegFromOpen(openSpreadLeg);
+            setTimeout(cargarTrades, 700);
+          } catch (err) {
+            console.error(err);
+            alert("No se pudo cerrar el spread neto.");
+          }
+          return;
+        }
+
         // patas realmente abiertas
         const openLegsNow = legs.filter(e => e._estado === "OPEN" && e._isReallyOpen);
 
@@ -1061,7 +2051,7 @@ function renderSpreads(spreadGroups) {
         };
 
         try {
-          await apiPostNoCORS(payload);
+            await apiPostNoCORS(cleanPayload(payload));
           setTimeout(cargarTrades, 700);
         } catch (err) {
           console.error(err);
@@ -1082,42 +2072,42 @@ function renderPositions(positionGroups) {
     (b.lastKey || "").localeCompare(a.lastKey || "")
   );
 
-  groups.forEach((g) => {
-    const legs = [...g.legs].sort((a, b) => {
-      const ak = `${a._fechaISO} ${a._hora}`;
-      const bk = `${b._fechaISO} ${b._hora}`;
-      return bk.localeCompare(ak); // DESC
-    });
+    groups.forEach((g) => {
+        const legs = [...g.legs].sort((a, b) => {
+            const ak = `${a._fechaISO} ${a._hora}`;
+            const bk = `${b._fechaISO} ${b._hora}`;
+            return bk.localeCompare(ak); // DESC
+        });
 
-    // PnL realizado (solo eventos CLOSED)
-    let realized = 0;
-    legs.forEach((e) => {
-      if (e._estado === "CLOSED") realized += Number(e._resultadoNum || 0);
-    });
+        // PnL realizado (solo eventos CLOSED)
+        let realized = 0;
+        legs.forEach((e) => {
+            if (e._estado === "CLOSED") realized += Number(e._resultadoNum || 0);
+        });
 
-    // Patas realmente abiertas
-    const openLegs = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
-    const isOpen = openLegs.length > 0;
+        // Patas realmente abiertas
+        const openLegs = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
+        const isOpen = openLegs.length > 0;
 
-    // Pata operativa: SHORT call (CC/PMCC)
-    const currentShort =
-      openLegs.find((e) => ["SHORT_CALL", "SHORT"].includes((e._pata || "").toUpperCase())) ||
-      null;
+        // Pata operativa: SHORT call (CC/PMCC)
+        const currentShort =
+            openLegs.find((e) => ["SHORT_CALL", "SHORT"].includes((e._pata || "").toUpperCase())) ||
+            null;
 
-    // Datos header (preferimos el SHORT actual)
-    const exp = currentShort
-      ? normalizarFecha(currentShort.expiracion)
-      : (normalizarFecha(legs[0]?.expiracion) || "—");
+        // Datos header (preferimos el SHORT actual)
+        const exp = currentShort
+            ? normalizarFecha(currentShort.expiracion)
+            : (normalizarFecha(legs[0]?.expiracion) || "—");
 
-    const strike = currentShort ? (currentShort.strikes || "—") : (legs[0]?.strikes || "—");
-    const qty = currentShort ? (currentShort.contratos || "—") : (legs[0]?.contratos || "—");
+        const strike = currentShort ? (currentShort.strikes || "—") : (legs[0]?.strikes || "—");
+        const qty = currentShort ? (currentShort.contratos || "—") : (legs[0]?.contratos || "—");
 
-    // Badges (por grupo)
-    const stratId = String(legs[0]?.estrategia_id || "").toUpperCase();
-    const tipo = legs[0]?.tipo || "";
+        // Badges (por grupo)
+        const stratId = String(legs[0]?.estrategia_id || "").toUpperCase();
+        const tipo = legs[0]?.tipo || "";
 
-    const li = document.createElement("li");
-    li.innerHTML = `
+        const li = document.createElement("li");
+        li.innerHTML = `
       <div class="row1">
         <strong>${g.ticker}</strong> — ${g.estrategiaLabel} • ${prettyBroker(g.broker)}
         ${badgeEstrategiaId(stratId)}
@@ -1136,7 +2126,8 @@ function renderPositions(positionGroups) {
 
       <div class="rowBtns">
         <button type="button" class="toggle">Ver eventos</button>
-        ${currentShort ? `<button type="button" class="closeShort">Cerrar short</button>` : ""}
+        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""},
+        ${ currentShort ? `<button type="button" class="closeShort">Cerrar short</button>` : "" },
         ${currentShort ? `<button type="button" class="rollShort">Roll short</button>` : ""}
       </div>
 
@@ -1174,6 +2165,22 @@ function renderPositions(positionGroups) {
       eventsDiv.style.display = hidden ? "block" : "none";
       toggleBtn.textContent = hidden ? "Ocultar eventos" : "Ver eventos";
     });
+
+
+    // Cerrar todas las patas abiertas (una por una)
+    const closeAllBtn = li.querySelector(".closeAllLegs");
+    if (closeAllBtn) {
+      closeAllBtn.addEventListener("click", async () => {
+        const openLegsNow = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
+        try {
+          await closeAllLegsSequential(openLegsNow, `${g.ticker} • ${g.position_id}`);
+          setTimeout(cargarTrades, 850);
+        } catch (err) {
+          console.error(err);
+          alert("No se pudieron cerrar todas las patas.");
+        }
+      });
+    }
 
     // Acciones rápidas sobre el short actual
     const closeShortBtn = li.querySelector(".closeShort");
@@ -1272,12 +2279,13 @@ if (!estrategiaIdNorm && t.estrategia) {
         ...t,
         estrategia_id: estrategiaIdNorm,
         _fechaISO: fechaISO,
-        _hora: t.hora || "00:00",
+        _hora: normalizarHora(t.hora || t.fecha),
         _estado: est,
         _resultadoNum: parseFloat(t.resultado) || 0,
         _tickerUp: tk,
         _posId: String(t.position_id || "").trim(),
         _pata: safeUpper(t.pata || ""),
+        _tipoOpcion: safeUpper(t.tipo_opcion || ""),
         _accion: safeUpper(t.accion || ""),
         _rowNum: t._row,
       });
@@ -1301,6 +2309,7 @@ if (!estrategiaIdNorm && t.estrategia) {
       return [
         (t._posId || "").trim(),
         (t._pata || "").trim(),
+        (t._tipoOpcion || "").trim(),
         (normalizarFecha(t.expiracion) || "").trim(),
         String(t.strikes || "").trim(),
       ].join("|");
@@ -1328,40 +2337,73 @@ timeline.forEach((t) => {
   if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "" || act === "BUY_STOCK")) {
     openSet.add(key);
     const arr = openStackByLeg.get(gk) || [];
-    arr.push(key);
+    if (!arr.includes(key)) arr.push(key); // ✅ anti-duplicado
     openStackByLeg.set(gk, arr);
   }
 
   // CLOSE / ROLL_CLOSE => cierra la ÚLTIMA pata abierta de ese (posId|pata)
-  if (st === "CLOSED" && (act === "CLOSE" || act === "ROLL_CLOSE" || act === "SELL_STOCK")) {
-    const arr = openStackByLeg.get(gk) || [];
-    const last = arr.pop();
-    if (last) openSet.delete(last);
-    openStackByLeg.set(gk, arr);
-  }
+    if (st === "CLOSED") {
+        const arr = openStackByLeg.get(gk) || [];
 
-  // ✅ cierre neto del spread: mata 1 SHORT y 1 LONG (últimos abiertos) para ese position_id
-  if (st === "CLOSED" && act === "CLOSE_SPREAD") {
+        // 1) intenta cerrar EXACTAMENTE esta pata (mismo strike/exp/tipo)
+        const idx = arr.lastIndexOf(key);
+        if (idx !== -1) {
+            arr.splice(idx, 1);
+            openSet.delete(key);
+            openStackByLeg.set(gk, arr);
+        } else {
+            // 2) fallback: si no matchea exacto, cierra la última abierta del grupo
+            const last = arr.pop();
+            if (last) openSet.delete(last);
+            openStackByLeg.set(gk, arr);
+        }
+    }
+
+
+    // ✅ cierres netos:
+  // - CLOSE_SPREAD (legacy): mata 1 SHORT y 1 LONG (PCS/CCS)
+  // - CLOSE_ALL_NET: mata TODAS las patas abiertas del position_id (PCS/CCS/IC/IB, etc.)
+  if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
     const pos = (t._posId || "").trim();
     if (!pos) return;
 
-    ["SHORT", "LONG"].forEach((leg) => {
-      const gk2 = `${pos}|${leg}`;
-      const arr2 = openStackByLeg.get(gk2) || [];
-      const last2 = arr2.pop();
-      if (last2) openSet.delete(last2);
+    if (act === "CLOSE_SPREAD") {
+      ["SHORT", "LONG"].forEach((leg) => {
+        const gk2 = `${pos}|${leg}`;
+        const arr2 = openStackByLeg.get(gk2) || [];
+        const last2 = arr2.pop();
+        if (last2) openSet.delete(last2);
+        openStackByLeg.set(gk2, arr2);
+      });
+      return;
+    }
+
+    // CLOSE_ALL_NET: limpiar todo lo que esté abierto bajo ese position_id
+    for (const [gk2, arr2] of openStackByLeg.entries()) {
+      if (!gk2.startsWith(pos + "|")) continue;
+      while (arr2.length) {
+        const last2 = arr2.pop();
+        if (last2) openSet.delete(last2);
+      }
       openStackByLeg.set(gk2, arr2);
-    });
+    }
   }
-}); // ✅ ESTE CIERRE ES EL QUE TE FALTA
+});
 
 
     
     // Anotar _isReallyOpen para dashboard / vista trades
     items.forEach((t) => {
       const hasPos = !!(t._posId && t._pata);
-      t._isReallyOpen = hasPos ? openSet.has(legKey(t)) : (t._estado === "OPEN");
+      t._legKey = legKey(t);
+      t._isReallyOpen = hasPos ? openSet.has(t._legKey) : (t._estado === "OPEN");
     });
+
+    // Guardar ...
+    window.__lastJournalState = {
+      items: items.map((x) => ({ ...x })),
+      loadedAt: Date.now(),
+    };
 // ===== SPREAD GROUPS (PCS) =====
     const spreadGroups = {};
     items.forEach((t) => {
@@ -1465,23 +2507,25 @@ if (mode === "POSITIONS") {
 
       li.innerHTML = `
        <div class="row1">
-  <strong>${t._tickerUp}</strong> — ${t.estrategia || ""} • ${prettyBroker(t.broker)}
-  ${wrapBadges(
-    [
-      badgeEstrategiaId(t.estrategia_id),
-      badgeTipo(t.tipo),
-      badgeDTE(t.expiracion),
-      badgeEstado(t._estado, isReallyOpen),
-      (t._estado === "CLOSED" ? badgePnL(t._resultadoNum) : "")
-    ].join("")
-  )}
-</div>
+         <strong>${t._tickerUp}</strong> — ${t.estrategia || ""} • ${prettyBroker(t.broker)}
+         ${wrapBadges(
+       [
+         badgeEstrategiaId(t.estrategia_id),
+         badgeTipo(t.tipo),
+         badgeDTE(t.expiracion),
+         badgeEstado(t._estado, isReallyOpen),
+         (t._estado === "CLOSED" ? badgePnL(t._resultadoNum) : "")
+       ].join("")
+       )}
+       </div>
 
 
         <div class="row2">
           <small>
             Posición: <b>${t._posId || "—"}</b><br/>
-            Pata: <b>${t._pata || "—"}</b> | Strike(s): <b>${t.strikes || "—"}</b> | Exp: <b>${normalizarFecha(t.expiracion) || "—"}</b>
+            Pata: <b>${t._pata || "—"}</b>
+            ${t._tipoOpcion ? ` | Tipo: <b>${t._tipoOpcion}</b>` : ""}
+            | Strike(s): <b>${t.strikes || "—"}</b> | Exp: <b>${normalizarFecha(t.expiracion) || "—"}</b>
           </small>
         </div>
         <div class="row3">
@@ -1502,10 +2546,21 @@ if (mode === "POSITIONS") {
         
 
       // Editar
-      li.querySelector(".edit").addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        cargarTradeEnFormulario(t);
-      });
+        li.querySelector(".edit").addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            cargarTradeEnFormulario(t);
+
+            // 👇 baja al formulario
+            document.getElementById("tradeForm")?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+            });
+
+            // 👇 resalta el trade en la lista por 1.2s
+            li.classList.add("flash-edit");
+            setTimeout(() => li.classList.remove("flash-edit"), 1200);
+        });
+
 
       // Cerrar pata
       const closeBtn = li.querySelector(".closeLeg");
@@ -1514,7 +2569,7 @@ if (mode === "POSITIONS") {
           ev.stopPropagation();
           try {
             await closeLegFromOpen(t);
-            setTimeout(cargarTrades, 650);
+            setTimeout(cargarTrades, 1200);
           } catch (err) {
             console.error(err);
             alert("No se pudo cerrar la pata.");
@@ -1550,7 +2605,7 @@ if (mode === "POSITIONS") {
 
         const payload = { ...t, estado: "DELETED", _row: t._rowNum };
         try {
-          await apiPostNoCORS(payload);
+            await apiPostNoCORS(cleanPayload(payload));
           setTimeout(cargarTrades, 600);
         } catch (err) {
           console.error(err);
@@ -1580,7 +2635,8 @@ function cargarTradeEnFormulario(t) {
   editRow = t._rowNum;
 
   if (fecha) fecha.value = normalizarFecha(t.fecha) || "";
-  if (hora) hora.value = t.hora || "";
+  if (hora) hora.value = normalizarHora(t.hora);
+
 
   if (ticker) ticker.value = t.ticker || "";
   if (broker) broker.value = t.broker || "";
@@ -1599,9 +2655,13 @@ function cargarTradeEnFormulario(t) {
 
   if (categoria) categoria.value = cat || "";
   renderEstrategiasForCategoria(cat || "", stratId || "");
+  syncNetModeVisibility();
 
   if (position_id) position_id.value = t.position_id || "";
   if (pata) pata.value = safeUpper(t.pata || "");
+  if (netMode) netMode.checked = (safeUpper(t.pata || "") === "SPREAD");
+  if (tipo_opcion) tipo_opcion.value = safeUpper(t.tipo_opcion || "");
+  syncTipoOpcionVisibility();
   if (accion) accion.value = safeUpper(t.accion || "OPEN");
   if (roll_group_id) roll_group_id.value = t.roll_group_id || "";
 
@@ -1631,9 +2691,15 @@ setHoraAhora();
 if (entrada_tipo) entrada_tipo.value = "CREDITO";
 if (salida_tipo) salida_tipo.value = "DEBITO";
 if (accion) accion.value = "OPEN";
+if (tipo_opcion) tipo_opcion.value = "";
+syncTipoOpcionVisibility();
 
 calcularResultadoFromInputs();
 renderEstrategiasForCategoria(categoria?.value || "");
+syncNetModeVisibility();
+try { syncCCComboVisibility(); } catch (e) {}
+try { refreshMultiLegVisibility(); } catch (e) {}
+try { renderLegsTable(); } catch (e) {}
 
 // --- Asegurar opción "POSITIONS" y renombrarla ---
 (function ensurePositionsViewOption() {
@@ -1656,10 +2722,6 @@ renderEstrategiasForCategoria(categoria?.value || "");
 cargarTrades();
 
 // Service worker: solo HTTPS o localhost
-if ("serviceWorker" in navigator) {
-  const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-  const isHttps = location.protocol === "https:";
-  if (isHttps || isLocalhost) {
-    navigator.serviceWorker.register("service-worker.js");
-  }
-}
+
+
+

@@ -37,6 +37,8 @@
       <option value="POSITIONS">Ver: Posiciones</option>
     </select>
 
+    <button type="button" id="repairBtn" title="Detecta y repara patas fantasmas / duplicados">🧰 Reparar</button>
+
     <select id="brokerFilter">
       <option value="ALL">Broker: Todos</option>
       <option value="SIGMA_TRADE">Sigma Trade</option>
@@ -51,6 +53,10 @@
       placeholder="Buscar ticker (SPY, AAPL...)"
       autocomplete="off"
     />
+
+    <button type="button" id="repairBtn" style="padding:8px 10px; border-radius:12px; border:1px solid rgba(0,0,0,.2); background:#fff; cursor:pointer;">
+      🧰 Reparar
+    </button>
   </div>
 
   <form id="tradeForm">
@@ -95,6 +101,13 @@
       <option value="STOCK">STOCK</option>
     </select>
 
+    <!-- Tipo de contrato (solo opciones). Se oculta cuando Pata=STOCK -->
+    <select id="tipo_opcion">
+      <option value="">Tipo (CALL/PUT)</option>
+      <option value="CALL">CALL</option>
+      <option value="PUT">PUT</option>
+    </select>
+
     <select id="accion">
       <option value="OPEN">OPEN</option>
       <option value="CLOSE">CLOSE</option>
@@ -111,6 +124,35 @@
 
     <input type="date" id="expiracion" />
     <input type="text" id="strikes" placeholder="Strikes" />
+
+    <!-- Multi-leg builder (solo spreads) -->
+    <div id="multiLegWrap" style="margin:10px 0; padding:10px; border:1px solid rgba(0,0,0,.12); border-radius:12px; display:none;">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" id="multiLegEnabled" />
+          Entrar múltiples patas (1 trade)
+        </label>
+
+        <button type="button" id="genLegsBtn" style="padding:6px 10px; border-radius:10px; border:1px solid rgba(0,0,0,.2); background:#fff; cursor:pointer;">
+          Generar patas
+        </button>
+
+        <small style="opacity:.85; line-height:1.3;">
+          Formatos: <b>PCS/CCS</b> “440/435” o “S:440 L:435” • <b>IC</b> “450/455/430/425” (SC/LC/SP/LP) o “SC:450 LC:455 SP:430 LP:425”
+        </small>
+      </div>
+
+      <div id="legsTable" style="margin-top:10px; overflow:auto; -webkit-overflow-scrolling:touch;"></div>
+      <small style="display:block; margin-top:8px; opacity:.85;">
+        Nota: en multi-patas, tú llenas el precio de <b>entrada</b> por pata. Para cerrar, usa “Cerrar pata” en la lista (igual que ahora).
+      </small>
+    </div>
+
+    <!-- Modo NETO: 1 solo precio (útil para spreads/IC cuando no vas a rolar pata por pata) -->
+    <label style="display:block; margin:6px 0 10px; font-size:13px; opacity:.9;">
+      <input type="checkbox" id="netMode" />
+      Guardar como NETO (1 precio)
+    </label>
 
     <!-- ENTRADA -->
     <select id="entrada_tipo" required>

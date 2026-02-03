@@ -1,59 +1,77 @@
-body {
+body{
   font-family: Arial, sans-serif;
   padding: 20px;
-  max-width: 500px;
-  margin: auto;
 }
 
-h1, h2 {
+/* Headings */
+h1, h2{
   text-align: center;
 }
 
-form {
+/* ===== Layout central consistente (todo al mismo ancho) ===== */
+.filters,
+form,
+#tradesList,
+#listTitle,
+.pnl,
+h1,
+h2{
+  max-width: 680px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ===== Form ===== */
+form{
   display: grid;
   gap: 10px;
 }
 
-input, select, button {
+/* Inputs / selects / buttons base */
+input, select, button{
   width: 100%;
+  box-sizing: border-box;
   padding: 10px;
   font-size: 16px;
 }
 
-button {
+/* Botones base */
+button{
   background: #111;
-  color: white;
+  color: #fff;
   border: none;
   cursor: pointer;
 }
 
-button:hover {
+button:hover{
   opacity: 0.85;
 }
 
-#cancelBtn {
+#cancelBtn{
   background: #ccc;
   color: #111;
 }
 
-ul {
+/* List */
+ul{
   list-style: none;
   padding: 0;
 }
 
-li {
+li{
   padding: 10px;
   margin-bottom: 6px;
   border-bottom: 1px solid #ddd;
 }
 
-#tradesList li.editing {
+#tradesList li.editing{
   background: #222;
   color: #fff;
   border-radius: 8px;
 }
 
-.pnl {
+/* PnL card */
+.pnl{
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -63,41 +81,89 @@ li {
   font-size: 18px;
 }
 
-.pnl.neutral {
+.pnl.neutral{
   background: #f0f0f0;
   color: #333;
 }
 
-.pnl.positive {
+.pnl.positive{
   background: #e6f7ed;
   color: #0f8a3d;
 }
 
-.pnl.negative {
+.pnl.negative{
   background: #fdecea;
   color: #b00020;
 }
 
-.btnRow {
+/* ===== Filters ===== */
+.filters{
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+/* ===== Buttons row inside the form (Guardar / Cancelar) ===== */
+.btnRow{
   display: flex;
   gap: 10px;
 }
 
-.btnRow button {
+.btnRow button{
   flex: 1;
 }
 
+/* ===== Buttons inside trade cards ===== */
 .rowBtns{
-  display:flex;
-  gap:8px;
-  margin-top:8px;
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
 }
 
+/* Override global width:100% for card buttons */
 .rowBtns button{
-  padding:8px;
-  font-size:14px;
-  border-radius:8px;
+  width: auto !important;
+  flex: 1 1 140px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 10px;
+  line-height: 1.1;
 }
 
-.row1{ font-size:15px; }
-.row2{ font-size:13px; opacity:0.85; margin-top:4px; }
+/* Card text */
+.row1{ font-size: 15px; }
+.row2{ font-size: 13px; opacity: 0.85; margin-top: 4px; }
+
+/* ===== Colors by action ===== */
+.rowBtns .edit{ background: #6b7280; }
+.rowBtns .rollLeg,
+.rowBtns .rollShort{ background: #2563eb; }
+.rowBtns .closeLeg{ background: #f97316; }
+.rowBtns .closeAllLegs{ background: #dc2626; }
+.rowBtns .closeAllNet{ background: #b91c1c; }
+.rowBtns .closeSpreadNet{ background: #7f1d1d; }
+.rowBtns .del{ background: #7f1d1d; }
+
+/* Repair button in filters */
+.repairBtn,
+#repairBtn{
+  background: #a16207 !important;
+  color: #fff !important;
+  border: none;
+}
+
+/* Hover */
+.rowBtns button:hover,
+.repairBtn:hover,
+#repairBtn:hover{
+  opacity: .88;
+}
+
+/* Highlight when editing (JS adds this class) */
+.flash-edit{
+  outline: 3px solid rgba(59,130,246,.75);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
