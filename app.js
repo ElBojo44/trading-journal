@@ -36,51 +36,6 @@ const strategyCatalog = {
   ],
 };
 
-function cleanPayload(obj) {
-    const allowed = [
-        "fecha", "hora", "ticker", "broker",
-        "categoria", "estrategia_id", "estrategia", "sesgo", "tipo",
-        "expiracion", "strikes", "tipo_opcion",
-        "entrada_tipo", "credito_debito",
-        "salida_tipo", "credito_debito_salida",
-        "contratos", "resultado", "notas",
-        "estado", "cierre_fecha",
-        "position_id", "pata", "accion", "roll_group_id",
-        "force_new", "_row"
-    ];
-
-    const out = {};
-    allowed.forEach(k => {
-        if (obj[k] !== undefined) out[k] = obj[k];
-    });
-    return out;
-}
-
-
-function normalizarHora(h) {
-    if (!h) return "00:00";
-
-    // ISO tipo 1899-12-31T03:43:00.000Z
-    if (typeof h === "string" && h.includes("T")) {
-        const m = h.match(/T(\d{2}):(\d{2})/);
-        if (m) return `${m[1]}:${m[2]}`;
-    }
-
-    // "HH:mm:ss" o "HH:mm"
-    if (typeof h === "string" && /^\d{2}:\d{2}/.test(h)) {
-        return h.slice(0, 5);
-    }
-
-    // Date
-    const d = new Date(h);
-    if (!isNaN(d)) {
-        const hh = String(d.getHours()).padStart(2, "0");
-        const mm = String(d.getMinutes()).padStart(2, "0");
-        return `${hh}:${mm}`;
-    }
-
-    return "00:00";
-}
 
 
 const brokerLabels = {
@@ -2024,31 +1979,37 @@ if (closeAllNetBtn) {
         if (!confirm(`Confirmar cierre NETO del spread ${g.ticker}?`)) return;
 
         const qty = Number(shortLeg.contratos || longLeg.contratos || 1) || 1;
-        const pnl = (netEntry - netOut) * 100 * qty;
+        const entradaTipo = netEntry >= 0 ? "CREDITO" : "DEBITO";
+const entradaVal = Math.abs(netEntry);
+const salidaTipo = netEntry >= 0 ? "DEBITO" : "CREDITO";
 
-        const payload = {
-          ...shortLeg,
-          _row: null,
-          force_new: true,
+const payload = {
+  ...shortLeg,
+  _row: null,
+  force_new: true,
 
-          position_id: g.position_id,
-          pata: "SPREAD",
-          accion: "CLOSE_SPREAD",
-          estado: "CLOSED",
-          cierre_fecha: todayLocalISO(),
+  position_id: g.position_id,
+  pata: "SPREAD",
+  accion: "CLOSE_SPREAD",
+  estado: "CLOSED",
+  cierre_fecha: todayLocalISO(),
 
-          entrada_tipo: "CREDITO",
-          credito_debito: netEntry.toFixed(2),
-          salida_tipo: "DEBITO",
-          credito_debito_salida: netOut.toFixed(2),
+  entrada_tipo: entradaTipo,
+  credito_debito: entradaVal.toFixed(2),
+  salida_tipo: salidaTipo,
+  credito_debito_salida: netOut.toFixed(2),
 
-          strikes: `S:${shortLeg.strikes}|L:${longLeg.strikes}`,
-          expiracion: shortLeg.expiracion || longLeg.expiracion || "",
+  strikes: `S:${shortLeg.strikes}|L:${longLeg.strikes}`,
+  expiracion: shortLeg.expiracion || longLeg.expiracion || "",
 
-          contratos: qty,
-          resultado: pnl.toFixed(2),
-          notas: (shortLeg.notas || "") + " [Cierre NETO]",
-        };
+  contratos: qty,
+  resultado: "",
+  notas: (shortLeg.notas || "") + " [Cierre NETO]",
+};
+
+payload.hora = getHoraAhoraHHMM();
+payload.resultado = computeEventPnL(payload);
+
 
         try {
             await apiPostNoCORS(cleanPayload(payload));
