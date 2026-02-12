@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Trading Journal</title>
+
   <link rel="stylesheet" href="style.css" />
-  <link rel="manifest" href="manifest.json" />
+  <!-- <link rel="manifest" href="manifest.json" /> -->
 </head>
 <body>
 
@@ -47,12 +48,7 @@
       <option value="WEBULL">Webull</option>
     </select>
 
-    <input
-      type="text"
-      id="tickerSearch"
-      placeholder="Buscar ticker (SPY, AAPL...)"
-      autocomplete="off"
-    />
+    <input type="text" id="tickerSearch" placeholder="Buscar ticker (SPY, AAPL...)" autocomplete="off" />
   </div>
 
   <form id="tradeForm">
@@ -122,33 +118,35 @@
       <input type="date" id="expiracion" />
       <label for="expiracion">Fecha de expiración</label>
     </div>
+
     <input type="text" id="strikes" placeholder="Strikes" />
 
     <!-- Multi-leg builder (solo spreads) -->
-    <div id="multiLegWrap" style="margin:10px 0; padding:10px; border:1px solid rgba(0,0,0,.12); border-radius:12px; display:none;">
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <label style="display:flex; gap:8px; align-items:center;">
+    <div id="multiLegWrap" class="ml-wrap">
+      <div class="ml-head">
+        <label class="ml-check">
           <input type="checkbox" id="multiLegEnabled" />
           Entrar múltiples patas (1 trade)
         </label>
 
-        <button type="button" id="genLegsBtn" style="padding:6px 10px; border-radius:10px; border:1px solid rgba(0,0,0,.2); background:#fff; cursor:pointer;">
+        <button type="button" id="genLegsBtn" class="ml-btn">
           Generar patas
         </button>
 
-        <small style="opacity:.85; line-height:1.3;">
+        <small class="ml-help">
           Formatos: <b>PCS/CCS</b> “440/435” o “S:440 L:435” • <b>IC</b> “450/455/430/425” (SC/LC/SP/LP) o “SC:450 LC:455 SP:430 LP:425”
         </small>
       </div>
 
-      <div id="legsTable" style="margin-top:10px; overflow:auto; -webkit-overflow-scrolling:touch;"></div>
-      <small style="display:block; margin-top:8px; opacity:.85;">
+      <div id="legsTable" class="ml-table"></div>
+
+      <small class="ml-note">
         Nota: en multi-patas, tú llenas el precio de <b>entrada</b> por pata. Para cerrar, usa “Cerrar pata” en la lista (igual que ahora).
       </small>
     </div>
 
-    <!-- Modo NETO: 1 solo precio (útil para spreads/IC cuando no vas a rolar pata por pata) -->
-    <label style="display:block; margin:6px 0 10px; font-size:13px; opacity:.9;">
+    <!-- Modo NETO -->
+    <label class="net-wrap">
       <input type="checkbox" id="netMode" />
       Guardar como NETO (1 precio)
     </label>
@@ -169,7 +167,6 @@
 
     <input type="number" id="contratos" placeholder="Contratos" />
 
-    <!-- Resultado calculado -->
     <input type="number" step="0.01" id="resultado" placeholder="Resultado $" readonly />
 
     <input type="text" id="notas" placeholder="Notas" />
@@ -183,6 +180,6 @@
   <h2 id="listTitle">📅 Trades</h2>
   <ul id="tradesList"></ul>
 
-  <script src="app.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>

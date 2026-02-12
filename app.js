@@ -1,3 +1,29 @@
+window.addEventListener("error", (e) => {
+  console.error("❌ JS ERROR:", e.message, e.error);
+  alert("❌ JS ERROR: " + e.message);
+});
+
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("❌ PROMISE REJECTION:", e.reason);
+  alert("❌ PROMISE REJECTION: " + (e.reason?.message || e.reason));
+});
+
+console.log("✅ app.js arrancó", new Date().toISOString());
+
+console.log("✅ app.js arrancó", new Date().toISOString());
+
+window.addEventListener("error", (e) => {
+  console.error("❌ JS ERROR:", e.message, e.error);
+  alert("❌ JS ERROR: " + e.message);
+});
+
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("❌ PROMISE REJECTION:", e.reason);
+  alert("❌ PROMISE REJECTION: " + (e.reason?.message || e.reason));
+});
+
+
+
 // Trading Journal - app.js (Eventos por pata + filtros Abiertas/Cerradas/Todas + Vista SPREADS)
 // Compatible con tu index.html (tradesList, listTitle, statusView, viewMode)
 // Requiere en Google Sheet headers: position_id, pata, accion, roll_group_id, force_new
@@ -784,6 +810,45 @@ function safeUpper(x) {
   return String(x || "").trim().toUpperCase();
 }
 
+// ---------- Performance helpers (debounce + no concurrent loads) ----------
+let __cargarTradesInFlight = false;
+let __cargarTradesQueued = false;
+
+function debounce(fn, wait = 250) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
+// Wrapper: evita que correr cargarTrades() 2 veces al mismo tiempo.
+// Si llega otra llamada mientras está corriendo, se “queuea” y corre al final.
+async function cargarTradesSafe() {
+  if (__cargarTradesInFlight) {
+    __cargarTradesQueued = true;
+    return;
+  }
+
+  __cargarTradesInFlight = true;
+
+  try {
+    await cargarTrades(); // ✅ AQUÍ debe llamar a cargarTrades()
+  } finally {
+    __cargarTradesInFlight = false;
+
+    if (__cargarTradesQueued) {
+      __cargarTradesQueued = false;
+      setTimeout(cargarTradesSafe, 80);
+    }
+  }
+}
+
+
+// Debounced: para búsquedas y filtros rápidos (typing)
+const cargarTradesDebounced = debounce(cargarTradesSafe, 300);
+
+
 /** Genera un position_id cuando abres una posición nueva */
 function generatePositionId({ tk, stratId, fechaISO }) {
   const ts = Date.now().toString(36).toUpperCase();
@@ -1059,27 +1124,82 @@ function apiGetJSONP() {
 }
 
 // ---------- POST sin CORS ----------
-async function apiPostNoCORS(payload) {
-  await fetch(API_URL, {
-    method: "POST",
-    mode: "no-cors",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(payload),
+// Nota: con mode:"no-cors" el browser no permite leer la respuesta. Para que sea más estable:
+// - Encolamos los POST (evita ráfagas que tumben Apps Script)
+// - Ponemos timeout + retry suave
+const __postQueue = [];
+let __postBusy = false;
+
+function __sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function apiPostNoCORS(payload, opts = {}) {
+  const { retries = 2, timeoutMs = 15000 } = opts || {};
+  return new Promise((resolve, reject) => {
+    __postQueue.push({ payload, retries, timeoutMs, resolve, reject });
+    if (!__postBusy) __drainPostQueue();
   });
 }
 
-// ---------- listeners ----------
+async function __drainPostQueue(){
+  __postBusy = true;
+  try{
+    while(__postQueue.length){
+      const job = __postQueue.shift();
+      const { payload, retries, timeoutMs, resolve, reject } = job;
+
+      let attempt = 0;
+      while(true){
+        attempt += 1;
+        const controller = new AbortController();
+        const to = setTimeout(() => controller.abort(), timeoutMs);
+
+        try{
+          await fetch(API_URL, {
+            method: "POST",
+            mode: "no-cors",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+          clearTimeout(to);
+          // Pequeña pausa: baja muchísimo los "load failed" en Apps Script
+          await __sleep(120);
+          resolve(true);
+          break;
+        }catch(err){
+          clearTimeout(to);
+          if (attempt > retries + 1){
+            reject(err);
+            break;
+          }
+          // Backoff suave + jitter
+          const backoff = Math.min(1200, 250 * attempt) + Math.floor(Math.random()*180);
+          await __sleep(backoff);
+        }
+      }
+    }
+  }finally{
+    __postBusy = false;
+  }
+}
+
+
+
+
 credito_debito?.addEventListener("input", calcularResultadoFromInputs);
 credito_debito_salida?.addEventListener("input", calcularResultadoFromInputs);
 contratos?.addEventListener("input", calcularResultadoFromInputs);
 entrada_tipo?.addEventListener("change", calcularResultadoFromInputs);
 salida_tipo?.addEventListener("change", calcularResultadoFromInputs);
 
-historyRange?.addEventListener("change", () => cargarTrades());
-brokerFilter?.addEventListener("change", () => cargarTrades());
-tickerSearch?.addEventListener("input", () => cargarTrades());
-statusView?.addEventListener("change", () => cargarTrades());
-viewMode?.addEventListener("change", () => cargarTrades());
+historyRange?.addEventListener("change", () => cargarTradesSafe());
+brokerFilter?.addEventListener("change", () => cargarTradesSafe());
+statusView?.addEventListener("change", () => cargarTradesSafe());
+viewMode?.addEventListener("change", () => cargarTradesSafe());
+
+// typing = debounced
+tickerSearch?.addEventListener("input", () => cargarTradesDebounced());
+
 
 // ---------- Reparar (cierra fantasmas en Google Sheet) ----------
 repairBtn?.addEventListener("click", async () => {
@@ -1087,7 +1207,7 @@ repairBtn?.addEventListener("click", async () => {
     // Usamos el último estado calculado para evitar inconsistencias
     const st = window.__lastJournalState;
     if (!st || !Array.isArray(st.items)) {
-      await cargarTrades();
+      await cargarTradesSafe();
     }
     const state = window.__lastJournalState;
     const items = (state && Array.isArray(state.items)) ? state.items : [];
@@ -1144,7 +1264,7 @@ const ghosts = items.filter(t =>
 
     alert(`Listo ✅ Reparé ${ghosts.length} pata(s). Recargando...`);
     requestScrollTop();
-    setTimeout(cargarTrades, 750);
+    setTimeout(cargarTradesSafe, 750);
   } catch (err) {
     console.error(err);
     alert("No se pudo ejecutar Reparar. Mira la consola.");
@@ -1339,7 +1459,7 @@ form?.addEventListener("submit", async (e) => {
       syncCCComboVisibility();
       renderEstrategiasForCategoria("");
     requestScrollTop();
-setTimeout(cargarTrades, 650);
+setTimeout(cargarTradesSafe, 650);
     } catch (err) {
       console.error(err);
       alert("No se pudo guardar CC Combo. Mira la consola.");
@@ -1447,7 +1567,7 @@ setTimeout(cargarTrades, 650);
       syncNetModeVisibility();
       renderEstrategiasForCategoria("");
     requestScrollTop();
-setTimeout(cargarTrades, 650);
+setTimeout(cargarTradesSafe, 650);
     } catch (err) {
       console.error(err);
       alert("No se pudo guardar multi-patas. Mira la consola.");
@@ -1497,7 +1617,7 @@ setTimeout(cargarTrades, 650);
   };
 
   try {
-    await apiPostNoCORS(trade);
+    await apiPostNoCORS(cleanPayload(trade));
 
     salirModoEdicion();
     form.reset();
@@ -1518,7 +1638,7 @@ setTimeout(cargarTrades, 650);
     syncNetModeVisibility();
 
     requestScrollTop();
-    setTimeout(cargarTrades, 650);
+    setTimeout(cargarTradesSafe, 650);
   } catch (err) {
     console.error(err);
     alert(`No se pudo guardar: ${err.message}`);
@@ -1870,8 +1990,8 @@ function renderSpreads(spreadGroups) {
 
       <div class="rowBtns">
         <button type="button" class="toggle">Ver patas</button>
-        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""},
-        ${isOpen ? '<button type="button" class="closeAllNet">Cerrar todas (Neto)</button>' : ""},
+        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""}
+        ${isOpen ? '<button type="button" class="closeAllNet">Cerrar todas (Neto)</button>' : ""}
         ${canNetClose ? '<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>' : ""}
       </div>
 
@@ -1924,7 +2044,7 @@ function renderSpreads(spreadGroups) {
         const openLegsNow = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
         try {
           await closeAllLegsSequential(openLegsNow, `${g.ticker} • ${g.position_id}`);
-          setTimeout(cargarTrades, 850);
+          setTimeout(cargarTradesSafe, 850);
         } catch (err) {
           console.error(err);
           alert("No se pudieron cerrar todas las patas.");
@@ -1939,7 +2059,7 @@ if (closeAllNetBtn) {
     const openLegsNow = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
     try {
       await closeAllLegsNet(openLegsNow, { ticker: g.ticker, position_id: g.position_id });
-      setTimeout(cargarTrades, 850);
+      setTimeout(cargarTradesSafe, 850);
     } catch (err) {
       console.error(err);
       alert("No se pudo cerrar NETO (todas las patas).");
@@ -1963,10 +2083,10 @@ if (closeAllNetBtn) {
         if (el.classList.contains("closeLeg")) {
           await closeLegFromOpen(legEvent);
     requestScrollTop();
-setTimeout(cargarTrades, 650);
+setTimeout(cargarTradesSafe, 650);
         } else if (el.classList.contains("rollLeg")) {
           await rollLegFromOpen(legEvent);
-          setTimeout(cargarTrades, 700);
+          setTimeout(cargarTradesSafe, 700);
         }
       } catch (err) {
         console.error(err);
@@ -1982,7 +2102,7 @@ setTimeout(cargarTrades, 650);
         if (openSpreadLeg) {
           try {
             await closeLegFromOpen(openSpreadLeg);
-            setTimeout(cargarTrades, 700);
+            setTimeout(cargarTradesSafe, 700);
           } catch (err) {
             console.error(err);
             alert("No se pudo cerrar el spread neto.");
@@ -2064,7 +2184,7 @@ payload.resultado = computeEventPnL(payload);
 
         try {
             await apiPostNoCORS(cleanPayload(payload));
-          setTimeout(cargarTrades, 700);
+          setTimeout(cargarTradesSafe, 700);
         } catch (err) {
           console.error(err);
           alert("No se pudo cerrar el spread neto.");
@@ -2138,8 +2258,8 @@ function renderPositions(positionGroups) {
 
       <div class="rowBtns">
         <button type="button" class="toggle">Ver eventos</button>
-        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""},
-        ${ currentShort ? `<button type="button" class="closeShort">Cerrar short</button>` : "" },
+        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""}
+        ${ currentShort ? `<button type="button" class="closeShort">Cerrar short</button>` : "" }
         ${currentShort ? `<button type="button" class="rollShort">Roll short</button>` : ""}
       </div>
 
@@ -2186,7 +2306,7 @@ function renderPositions(positionGroups) {
         const openLegsNow = legs.filter((e) => e._estado === "OPEN" && e._isReallyOpen);
         try {
           await closeAllLegsSequential(openLegsNow, `${g.ticker} • ${g.position_id}`);
-          setTimeout(cargarTrades, 850);
+          setTimeout(cargarTradesSafe, 850);
         } catch (err) {
           console.error(err);
           alert("No se pudieron cerrar todas las patas.");
@@ -2201,7 +2321,7 @@ function renderPositions(positionGroups) {
         try {
           await closeLegFromOpen(currentShort);
     requestScrollTop();
-setTimeout(cargarTrades, 650);
+setTimeout(cargarTradesSafe, 650);
         } catch (err) {
           console.error(err);
           alert("No se pudo cerrar el short.");
@@ -2214,7 +2334,7 @@ setTimeout(cargarTrades, 650);
       rollShortBtn.addEventListener("click", async () => {
         try {
           await rollLegFromOpen(currentShort);
-          setTimeout(cargarTrades, 700);
+          setTimeout(cargarTradesSafe, 700);
         } catch (err) {
           console.error(err);
           alert("No se pudo rolar el short.");
@@ -2238,10 +2358,10 @@ setTimeout(cargarTrades, 650);
         if (el.classList.contains("closeLeg")) {
           await closeLegFromOpen(legEvent);
     requestScrollTop();
-setTimeout(cargarTrades, 650);
+setTimeout(cargarTradesSafe, 650);
         } else if (el.classList.contains("rollLeg")) {
           await rollLegFromOpen(legEvent);
-          setTimeout(cargarTrades, 700);
+          setTimeout(cargarTradesSafe, 700);
         }
       } catch (err) {
         console.error(err);
@@ -2256,9 +2376,13 @@ setTimeout(cargarTrades, 650);
 
    
 // ---------- cargar trades ----------
+
+
 async function cargarTrades() {
   try {
     const data = await apiGetJSONP();
+    console.log("RAW DATA LENGTH:", Array.isArray(data) ? data.length : data);
+
 
     const rangeKey = historyRange?.value || "TODAY";
     const brokerKey = brokerFilter?.value || "ALL";
@@ -2280,14 +2404,13 @@ async function cargarTrades() {
       const tk = safeUpper(t.ticker || "");
       if (search && !tk.includes(search)) return;
 
-let estrategiaIdNorm = t.estrategia_id || "";
+      let estrategiaIdNorm = t.estrategia_id || "";
 
-// 🔁 Inferir desde el label si no existe
-if (!estrategiaIdNorm && t.estrategia) {
-  const found = findCatIdByLabel(t.estrategia);
-  if (found) estrategiaIdNorm = found.id; // "PCS", "CC", etc.
-}
-
+      // 🔁 Inferir desde el label si no existe
+      if (!estrategiaIdNorm && t.estrategia) {
+        const found = findCatIdByLabel(t.estrategia);
+        if (found) estrategiaIdNorm = found.id; // "PCS", "CC", etc.
+      }
 
       items.push({
         ...t,
@@ -2304,6 +2427,15 @@ if (!estrategiaIdNorm && t.estrategia) {
         _rowNum: t._row,
       });
     });
+
+    console.log("ITEMS AFTER FILTERS:", items.length, {
+  rangeKey: historyRange?.value,
+  brokerKey: brokerFilter?.value,
+  search: (tickerSearch?.value || "").trim().toUpperCase(),
+  statusView: statusView?.value,
+  viewMode: viewMode?.value
+});
+
 
     // Orden DESC para mostrar, pero para timeline necesitamos ASC
     items.sort((a, b) => {
@@ -2338,62 +2470,61 @@ if (!estrategiaIdNorm && t.estrategia) {
     const openSet = new Set();
     const openStackByLeg = new Map();
 
-timeline.forEach((t) => {
-  if (!t._posId || !t._pata) return;
+    timeline.forEach((t) => {
+      if (!t._posId || !t._pata) return;
 
-  const key = legKey(t);
-  const gk = legGroupKey(t);
+      const key = legKey(t);
+      const gk = legGroupKey(t);
 
-  const act = (t._accion || "").toUpperCase();
-  const st = (t._estado || "").toUpperCase();
+      const act = (t._accion || "").toUpperCase();
+      const st = (t._estado || "").toUpperCase();
 
-  // OPEN / ROLL_OPEN => abre una pata específica (por expiración+strike)
-  if (st === "OPEN" && (act === "OPEN" || act === "ROLL_OPEN" || act === "" || act === "BUY_STOCK")) {
-    openSet.add(key);
-    const arr = openStackByLeg.get(gk) || [];
-    if (!arr.includes(key)) arr.push(key); // ✅ anti-duplicado
-    openStackByLeg.set(gk, arr);
-  }
+      // OPEN / ROLL_OPEN => abre una pata específica (por expiración+strike)
+      if (
+        st === "OPEN" &&
+        (act === "OPEN" || act === "ROLL_OPEN" || act === "" || act === "BUY_STOCK")
+      ) {
+        openSet.add(key);
+        const arr = openStackByLeg.get(gk) || [];
+        if (!arr.includes(key)) arr.push(key); // ✅ anti-duplicado
+        openStackByLeg.set(gk, arr);
+      }
 
-  // CLOSE / ROLL_CLOSE => cierra la ÚLTIMA pata abierta de ese (posId|pata)
-    if (st === "CLOSED") {
+      // CLOSE / ROLL_CLOSE => cierra la ÚLTIMA pata abierta de ese (posId|pata)
+      if (st === "CLOSED") {
         const arr = openStackByLeg.get(gk) || [];
 
         // 1) intenta cerrar EXACTAMENTE esta pata (mismo strike/exp/tipo)
         const idx = arr.lastIndexOf(key);
         if (idx !== -1) {
-            arr.splice(idx, 1);
-            openSet.delete(key);
-            openStackByLeg.set(gk, arr);
+          arr.splice(idx, 1);
+          openSet.delete(key);
+          openStackByLeg.set(gk, arr);
         } else {
-            // 2) fallback: si no matchea exacto, cierra la última abierta del grupo
-            const last = arr.pop();
-            if (last) openSet.delete(last);
-            openStackByLeg.set(gk, arr);
+          // 2) fallback: si no matchea exacto, cierra la última abierta del grupo
+          const last = arr.pop();
+          if (last) openSet.delete(last);
+          openStackByLeg.set(gk, arr);
         }
-    }
+      }
 
+      // ✅ cierres netos:
+      // - CLOSE_SPREAD / CLOSE_ALL_NET: cierre TOTAL del position_id (mata todas las patas)
+      if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
+        const pos = (t._posId || "").trim();
+        if (!pos) return;
 
-    // ✅ cierres netos:
-// - CLOSE_SPREAD / CLOSE_ALL_NET: el cierre neto representa el cierre TOTAL del position_id.
-//   Por eso matamos TODAS las patas abiertas de ese position_id (evita "patas fantasmas" y dobles conteos).
-if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
-  const pos = (t._posId || "").trim();
-  if (!pos) return;
+        for (const [gk2, arr2] of openStackByLeg.entries()) {
+          if (!gk2.startsWith(pos + "|")) continue;
+          while (arr2.length) {
+            const last2 = arr2.pop();
+            if (last2) openSet.delete(last2);
+          }
+          openStackByLeg.set(gk2, arr2);
+        }
+      }
+    });
 
-  for (const [gk2, arr2] of openStackByLeg.entries()) {
-    if (!gk2.startsWith(pos + "|")) continue;
-    while (arr2.length) {
-      const last2 = arr2.pop();
-      if (last2) openSet.delete(last2);
-    }
-    openStackByLeg.set(gk2, arr2);
-  }
-}
-});
-
-
-    
     // Anotar _isReallyOpen para dashboard / vista trades
     items.forEach((t) => {
       const hasPos = !!(t._posId && t._pata);
@@ -2401,12 +2532,13 @@ if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
       t._isReallyOpen = hasPos ? openSet.has(t._legKey) : (t._estado === "OPEN");
     });
 
-    // Guardar ...
+    // Guardar snapshot
     window.__lastJournalState = {
       items: items.map((x) => ({ ...x })),
       loadedAt: Date.now(),
     };
-// ===== SPREAD GROUPS (PCS) =====
+
+    // ===== SPREAD GROUPS =====
     const spreadGroups = {};
     items.forEach((t) => {
       if (!isSpreadStrategyId(t.estrategia_id)) return;
@@ -2431,50 +2563,49 @@ if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
       if (k > g.lastKey) g.lastKey = k;
     });
 
-// ===== POSITION GROUPS (CC + DIAGONAL/PMCC) =====
-const positionGroups = {};
-items.forEach((t) => {
-  if (!isPositionStrategyId(t.estrategia_id)) return;
+    // ===== POSITION GROUPS (CC + DIAGONAL/PMCC) =====
+    const positionGroups = {};
+    items.forEach((t) => {
+      if (!isPositionStrategyId(t.estrategia_id)) return;
 
-  const posId = (t._posId || "").trim();
-  if (!posId) return; // si no hay position_id, no agrupamos aquí
+      const posId = (t._posId || "").trim();
+      if (!posId) return;
 
-  if (!positionGroups[posId]) {
-    positionGroups[posId] = {
-      position_id: posId,
-      ticker: t._tickerUp,
-      broker: t.broker || "",
-      estrategiaLabel: t.estrategia || "",
-      lastKey: "",
-      legs: [],
-    };
-  }
+      if (!positionGroups[posId]) {
+        positionGroups[posId] = {
+          position_id: posId,
+          ticker: t._tickerUp,
+          broker: t.broker || "",
+          estrategiaLabel: t.estrategia || "",
+          lastKey: "",
+          legs: [],
+        };
+      }
 
-  const g = positionGroups[posId];
-  g.legs.push({ ...t, _isReallyOpen: openSet.has(legKey(t)) });
+      const g = positionGroups[posId];
+      g.legs.push({ ...t, _isReallyOpen: openSet.has(legKey(t)) });
 
-  const k = `${t._fechaISO} ${t._hora}`;
-  if (k > g.lastKey) g.lastKey = k;
-});
-
+      const k = `${t._fechaISO} ${t._hora}`;
+      if (k > g.lastKey) g.lastKey = k;
+    });
 
     // Dashboard KPIs
-    try { renderDashboard(items); } catch (e) { console.warn('Dashboard error', e); }
+    try { renderDashboard(items); } catch (e) { console.warn("Dashboard error", e); }
 
     // ===== Render según modo =====
     const mode = viewMode?.value || "TRADES";
+
     if (mode === "SPREADS") {
       if (listTitle) listTitle.textContent = "🧩 Spreads (PCS)";
       renderSpreads(spreadGroups);
       return;
     }
-if (mode === "POSITIONS") {
-  if (listTitle) listTitle.textContent = "🧷 Posiciones (CC/PMCC)";
-  renderPositions(positionGroups);
-  return;
-}
 
-
+    if (mode === "POSITIONS") {
+      if (listTitle) listTitle.textContent = "🧷 Posiciones (CC/PMCC)";
+      renderPositions(positionGroups);
+      return;
+    }
 
     // ===== Render trades =====
     if (list) list.innerHTML = "";
@@ -2505,22 +2636,21 @@ if (mode === "POSITIONS") {
       const openTag = (t._estado === "OPEN" && !isReallyOpen) ? " (ya cerrada)" : "";
       const isOpenEvent = (t._estado === "OPEN" && isReallyOpen);
       const closeLegBtnHtml = isOpenEvent ? `<button type="button" class="closeLeg">Cerrar pata</button>` : "";
-      const rollLegBtnHtml = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
+      const rollLegBtnHtml  = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
 
       li.innerHTML = `
-       <div class="row1">
-         <strong>${t._tickerUp}</strong> — ${t.estrategia || ""} • ${prettyBroker(t.broker)}
-         ${wrapBadges(
-       [
-         badgeEstrategiaId(t.estrategia_id),
-         badgeTipo(t.tipo),
-         badgeDTE(t.expiracion),
-         badgeEstado(t._estado, isReallyOpen),
-         (t._estado === "CLOSED" ? badgePnL(t._resultadoNum) : "")
-       ].join("")
-       )}
-       </div>
-
+        <div class="row1">
+          <strong>${t._tickerUp}</strong> — ${t.estrategia || ""} • ${prettyBroker(t.broker)}
+          ${wrapBadges(
+            [
+              badgeEstrategiaId(t.estrategia_id),
+              badgeTipo(t.tipo),
+              badgeDTE(t.expiracion),
+              badgeEstado(t._estado, isReallyOpen),
+              (t._estado === "CLOSED" ? badgePnL(t._resultadoNum) : "")
+            ].join("")
+          )}
+        </div>
 
         <div class="row2">
           <small>
@@ -2530,6 +2660,7 @@ if (mode === "POSITIONS") {
             | Strike(s): <b>${t.strikes || "—"}</b> | Exp: <b>${normalizarFecha(t.expiracion) || "—"}</b>
           </small>
         </div>
+
         <div class="row3">
           <small>
             Entrada: <b>${(safeUpper(t.entrada_tipo) === "DEBITO" ? "-" : "+")}${t.credito_debito || "—"}</b>
@@ -2545,24 +2676,20 @@ if (mode === "POSITIONS") {
           <button type="button" class="del">Borrar</button>
         </div>
       `;
-        
 
       // Editar
-        li.querySelector(".edit").addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            cargarTradeEnFormulario(t);
+      li.querySelector(".edit").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        cargarTradeEnFormulario(t);
 
-            // 👇 baja al formulario
-            document.getElementById("tradeForm")?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-            });
-
-            // 👇 resalta el trade en la lista por 1.2s
-            li.classList.add("flash-edit");
-            setTimeout(() => li.classList.remove("flash-edit"), 1200);
+        document.getElementById("tradeForm")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
         });
 
+        li.classList.add("flash-edit");
+        setTimeout(() => li.classList.remove("flash-edit"), 1200);
+      });
 
       // Cerrar pata
       const closeBtn = li.querySelector(".closeLeg");
@@ -2571,7 +2698,7 @@ if (mode === "POSITIONS") {
           ev.stopPropagation();
           try {
             await closeLegFromOpen(t);
-            setTimeout(cargarTrades, 1200);
+            setTimeout(() => cargarTradesSafe(), 650);
           } catch (err) {
             console.error(err);
             alert("No se pudo cerrar la pata.");
@@ -2586,7 +2713,7 @@ if (mode === "POSITIONS") {
           ev.stopPropagation();
           try {
             await rollLegFromOpen(t);
-            setTimeout(cargarTrades, 700);
+            setTimeout(() => cargarTradesSafe(), 700);
           } catch (err) {
             console.error(err);
             alert("No se pudo rolar la pata.");
@@ -2607,8 +2734,8 @@ if (mode === "POSITIONS") {
 
         const payload = { ...t, estado: "DELETED", _row: t._rowNum };
         try {
-            await apiPostNoCORS(cleanPayload(payload));
-          setTimeout(cargarTrades, 600);
+          await apiPostNoCORS(cleanPayload(payload));
+          setTimeout(() => cargarTradesSafe(), 600);
         } catch (err) {
           console.error(err);
           alert("No se pudo borrar.");
@@ -2635,8 +2762,11 @@ if (mode === "POSITIONS") {
   } catch (err) {
     console.error(err);
     alert("Error cargando trades. Mira la consola.");
+  } finally {
+    // (vacío a propósito) – la concurrencia la maneja cargarTradesSafe()
   }
 }
+
 
 // ---------- cargar trade en form ----------
 function cargarTradeEnFormulario(t) {
@@ -2740,7 +2870,7 @@ window.addEventListener("beforeunload", () => {
 });
 
 // Cargar al inicio
-cargarTrades();
+cargarTradesSafe();
 
 // Service worker: solo HTTPS o localhost
 

@@ -167,3 +167,59 @@ li{
   outline-offset: 4px;
   border-radius: 12px;
 }
+
+/* Multi-leg (mover inline styles del HTML a CSS) */
+.ml-wrap{
+  margin:10px 0;
+  padding:10px;
+  border:1px solid rgba(0,0,0,.12);
+  border-radius:12px;
+  display:none; /* el JS lo muestra/oculta */
+}
+
+.ml-head{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+.ml-check{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.ml-btn{
+  padding:6px 10px;
+  border-radius:10px;
+  border:1px solid rgba(0,0,0,.2);
+  background:#fff;
+  cursor:pointer;
+}
+
+.ml-help{
+  opacity:.85;
+  line-height:1.3;
+}
+
+.ml-table{
+  margin-top:10px;
+  overflow:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+.ml-note{
+  display:block;
+  margin-top:8px;
+  opacity:.85;
+}
+
+/* Neto */
+.net-wrap{
+  display:block;
+  margin:6px 0 10px;
+  font-size:13px;
+  opacity:.9;
+}
+
