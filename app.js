@@ -10,19 +10,6 @@ window.addEventListener("unhandledrejection", (e) => {
 
 console.log("✅ app.js arrancó", new Date().toISOString());
 
-console.log("✅ app.js arrancó", new Date().toISOString());
-
-window.addEventListener("error", (e) => {
-  console.error("❌ JS ERROR:", e.message, e.error);
-  alert("❌ JS ERROR: " + e.message);
-});
-
-window.addEventListener("unhandledrejection", (e) => {
-  console.error("❌ PROMISE REJECTION:", e.reason);
-  alert("❌ PROMISE REJECTION: " + (e.reason?.message || e.reason));
-});
-
-
 
 // Trading Journal - app.js (Eventos por pata + filtros Abiertas/Cerradas/Todas + Vista SPREADS)
 // Compatible con tu index.html (tradesList, listTitle, statusView, viewMode)
@@ -1961,6 +1948,10 @@ function renderSpreads(spreadGroups) {
 
     const stratId = String(legs[0]?.estrategia_id || "").toUpperCase();
     const openSpreadLeg = openLegs.find(e => (e._pata || "").toUpperCase() === "SPREAD") || null;
+    const isSpreadNetOpen = !!openSpreadLeg; // si hay pata SPREAD abierta, el spread fue abierto NETO
+    const isNetMode = isSpreadNetOpen;
+
+  
     // Si es PCS/CCS con patas separadas, mantenemos el botón neto existente.
     // Si se guardó en modo NETO (pata=SPREAD), cerraremos esa pata directamente.
     const canNetClose = isOpen && ((stratId === "PCS" || stratId === "CCS") || !!openSpreadLeg);
@@ -1990,9 +1981,9 @@ function renderSpreads(spreadGroups) {
 
       <div class="rowBtns">
         <button type="button" class="toggle">Ver patas</button>
-        ${isOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""}
-        ${isOpen ? '<button type="button" class="closeAllNet">Cerrar todas (Neto)</button>' : ""}
-        ${canNetClose ? '<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>' : ""}
+        ${isOpen && !isSpreadNetOpen ? '<button type="button" class="closeAllLegs">Cerrar todas</button>' : ""}
+        ${isOpen && !isSpreadNetOpen ? '<button type="button" class="closeAllNet">Cerrar todas (Neto)</button>' : ""}
+        ${isOpen ? '<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>' : ""}
       </div>
 
       <div class="events" style="display:none; margin-top:8px;"></div>
@@ -2020,10 +2011,13 @@ function renderSpreads(spreadGroups) {
             ${e._estado === "CLOSED" ? ` | PnL: <b>${fmtMoney(e._resultadoNum)}</b>` : ""}
           </small></div>
           <div style="margin-top:6px;">
-            ${canAct ? `
+            ${(canAct && !isNetMode) ? `
               <button type="button" class="closeLeg" data-idx="${idx}">Cerrar pata</button>
               <button type="button" class="rollLeg" data-idx="${idx}">Roll pata</button>
-            ` : ""}
+              ` : ""}
+            ${(canAct && isNetMode) ? `
+              <small style="opacity:.75;">Este spread fue abierto NETO. Cierra con <b>Cerrar Spread (Neto)</b>.</small>
+              ` : ""}
           </div>
         </div>
       `;
@@ -2451,7 +2445,7 @@ async function cargarTrades() {
       return ak.localeCompare(bk);
     });
 
-    function legKey(t) {
+    function baseLegKey(t) {
       return [
         (t._posId || "").trim(),
         (t._pata || "").trim(),
@@ -2460,6 +2454,12 @@ async function cargarTrades() {
         String(t.strikes || "").trim(),
       ].join("|");
     }
+
+    function instanceKey(t) {
+      const uniqueId = String(t._rowNum || `${t._fechaISO} ${t._hora}`).trim();
+      return baseLegKey(t) + "|" + uniqueId;
+    }
+
     function legGroupKey(t) {
       return [
         (t._posId || "").trim(),
@@ -2471,66 +2471,91 @@ async function cargarTrades() {
     const openStackByLeg = new Map();
 
     timeline.forEach((t) => {
-      if (!t._posId || !t._pata) return;
+  if (!t._posId || !t._pata) return;
 
-      const key = legKey(t);
-      const gk = legGroupKey(t);
+  const base = baseLegKey(t);
+  const inst = instanceKey(t);
+  const gk = legGroupKey(t);
 
-      const act = (t._accion || "").toUpperCase();
-      const st = (t._estado || "").toUpperCase();
+  const act = (t._accion || "").toUpperCase();
+  const st = (t._estado || "").toUpperCase();
 
-      // OPEN / ROLL_OPEN => abre una pata específica (por expiración+strike)
-      if (
-        st === "OPEN" &&
-        (act === "OPEN" || act === "ROLL_OPEN" || act === "" || act === "BUY_STOCK")
-      ) {
-        openSet.add(key);
-        const arr = openStackByLeg.get(gk) || [];
-        if (!arr.includes(key)) arr.push(key); // ✅ anti-duplicado
-        openStackByLeg.set(gk, arr);
+  // OPEN / ROLL_OPEN => abre una pata específica (permite duplicados)
+  if (
+    st === "OPEN" &&
+    (act === "OPEN" || act === "ROLL_OPEN" || act === "" || act === "BUY_STOCK")
+  ) {
+    openSet.add(inst);
+    const arr = openStackByLeg.get(gk) || [];
+    arr.push(inst);
+    openStackByLeg.set(gk, arr);
+  }
+
+  // CLOSE / ROLL_CLOSE => cierra la última instancia de ese (posId|pata) que coincida con el base
+  if (st === "CLOSED") {
+    const arr = openStackByLeg.get(gk) || [];
+
+    const idxFromEnd = [...arr].reverse().findIndex((x) => x.startsWith(base + "|"));
+    if (idxFromEnd !== -1) {
+      const realIndex = arr.length - 1 - idxFromEnd;
+      const instClosed = arr.splice(realIndex, 1)[0];
+      if (instClosed) openSet.delete(instClosed);
+    } else {
+      const last = arr.pop();
+      if (last) openSet.delete(last);
+    }
+
+    openStackByLeg.set(gk, arr);
+  }
+
+  // ✅ cierres netos:
+  // - CLOSE_SPREAD / CLOSE_ALL_NET: cierre TOTAL del position_id (mata todas las patas)
+  if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
+    const pos = (t._posId || "").trim();
+    if (!pos) return;
+
+    for (const [gk2, arr2] of openStackByLeg.entries()) {
+      if (!gk2.startsWith(pos + "|")) continue;
+
+      while (arr2.length) {
+        const last2 = arr2.pop();
+        if (last2) openSet.delete(last2);
       }
+      openStackByLeg.set(gk2, arr2);
+    }
+  }
+});
 
-      // CLOSE / ROLL_CLOSE => cierra la ÚLTIMA pata abierta de ese (posId|pata)
-      if (st === "CLOSED") {
-        const arr = openStackByLeg.get(gk) || [];
-
-        // 1) intenta cerrar EXACTAMENTE esta pata (mismo strike/exp/tipo)
-        const idx = arr.lastIndexOf(key);
-        if (idx !== -1) {
-          arr.splice(idx, 1);
-          openSet.delete(key);
-          openStackByLeg.set(gk, arr);
-        } else {
-          // 2) fallback: si no matchea exacto, cierra la última abierta del grupo
-          const last = arr.pop();
-          if (last) openSet.delete(last);
-          openStackByLeg.set(gk, arr);
-        }
-      }
-
-      // ✅ cierres netos:
-      // - CLOSE_SPREAD / CLOSE_ALL_NET: cierre TOTAL del position_id (mata todas las patas)
-      if (st === "CLOSED" && (act === "CLOSE_SPREAD" || act === "CLOSE_ALL_NET")) {
-        const pos = (t._posId || "").trim();
-        if (!pos) return;
-
-        for (const [gk2, arr2] of openStackByLeg.entries()) {
-          if (!gk2.startsWith(pos + "|")) continue;
-          while (arr2.length) {
-            const last2 = arr2.pop();
-            if (last2) openSet.delete(last2);
-          }
-          openStackByLeg.set(gk2, arr2);
-        }
-      }
-    });
 
     // Anotar _isReallyOpen para dashboard / vista trades
     items.forEach((t) => {
       const hasPos = !!(t._posId && t._pata);
-      t._legKey = legKey(t);
-      t._isReallyOpen = hasPos ? openSet.has(t._legKey) : (t._estado === "OPEN");
+      t._baseLegKey = baseLegKey(t);
+      t._instKey = instanceKey(t);
+      t._isReallyOpen = hasPos ? openSet.has(t._instKey) : (t._estado === "OPEN");
     });
+
+    // ===== Detectar modo de apertura por position_id (NETO vs LEGS) =====
+const posOpenMode = new Map(); // posId => "SPREAD_NET" | "LEGS"
+const openNetLegByPos = new Map(); // posId => evento OPEN con pata=SPREAD realmente abierto
+
+items.forEach((t) => {
+  const posId = String(t._posId || "").trim();
+  if (!posId) return;
+  if (!isSpreadStrategyId(t.estrategia_id)) return;
+
+  const isOpenReal = (t._estado === "OPEN" && t._isReallyOpen);
+
+  // Si existe una pata SPREAD realmente abierta => fue abierto NETO
+  if (isOpenReal && safeUpper(t._pata) === "SPREAD") {
+    posOpenMode.set(posId, "SPREAD_NET");
+    openNetLegByPos.set(posId, t);
+  } else {
+    // si no hemos decidido modo y hay eventos del spread, default LEGS
+    if (!posOpenMode.has(posId)) posOpenMode.set(posId, "LEGS");
+  }
+});
+
 
     // Guardar snapshot
     window.__lastJournalState = {
@@ -2557,7 +2582,7 @@ async function cargarTrades() {
       }
 
       const g = spreadGroups[posId];
-      g.legs.push({ ...t, _isReallyOpen: openSet.has(legKey(t)) });
+      g.legs.push({ ...t, _isReallyOpen: t._isReallyOpen });
 
       const k = `${t._fechaISO} ${t._hora}`;
       if (k > g.lastKey) g.lastKey = k;
@@ -2583,7 +2608,7 @@ async function cargarTrades() {
       }
 
       const g = positionGroups[posId];
-      g.legs.push({ ...t, _isReallyOpen: openSet.has(legKey(t)) });
+      g.legs.push({ ...t, _isReallyOpen: t._isReallyOpen });
 
       const k = `${t._fechaISO} ${t._hora}`;
       if (k > g.lastKey) g.lastKey = k;
@@ -2618,10 +2643,10 @@ async function cargarTrades() {
 
     const view = (statusView && statusView.value) ? statusView.value : "OPEN_ONLY";
 
-    items.forEach((t) => {
-      const key = legKey(t);
+    items.forEach((t) => {      
       const hasPos = !!(t._posId && t._pata);
-      const isReallyOpen = hasPos ? openSet.has(key) : (t._estado === "OPEN");
+      const isReallyOpen = t._isReallyOpen;
+
 
       // Filtrado
       if (view === "OPEN_ONLY") {
@@ -2635,8 +2660,24 @@ async function cargarTrades() {
 
       const openTag = (t._estado === "OPEN" && !isReallyOpen) ? " (ya cerrada)" : "";
       const isOpenEvent = (t._estado === "OPEN" && isReallyOpen);
-      const closeLegBtnHtml = isOpenEvent ? `<button type="button" class="closeLeg">Cerrar pata</button>` : "";
-      const rollLegBtnHtml  = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
+      
+      const posId = String(t._posId || "").trim();
+      const isSpread = isSpreadStrategyId(t.estrategia_id);
+      const spreadOpenMode = (posId && isSpread) ? (posOpenMode.get(posId) || "LEGS") : "LEGS";
+
+let closeLegBtnHtml = "";
+let rollLegBtnHtml  = "";
+let closeSpreadNetBtnHtml = "";
+
+// Si es spread NETO: SOLO permitir cerrar spread neto
+if (isOpenEvent && isSpread && spreadOpenMode === "SPREAD_NET") {
+  closeSpreadNetBtnHtml = `<button type="button" class="closeSpreadNet">Cerrar Spread (Neto)</button>`;
+} else {
+  // comportamiento normal
+  closeLegBtnHtml = isOpenEvent ? `<button type="button" class="closeLeg">Cerrar pata</button>` : "";
+  rollLegBtnHtml  = isOpenEvent ? `<button type="button" class="rollLeg">Roll pata</button>` : "";
+}
+
 
       li.innerHTML = `
         <div class="row1">
@@ -2673,6 +2714,7 @@ async function cargarTrades() {
           <button type="button" class="edit">Editar</button>
           ${closeLegBtnHtml}
           ${rollLegBtnHtml}
+          ${closeSpreadNetBtnHtml}
           <button type="button" class="del">Borrar</button>
         </div>
       `;
@@ -2720,6 +2762,31 @@ async function cargarTrades() {
           }
         });
       }
+
+      // Cerrar Spread (Neto) desde vista TRADES
+const closeSpreadBtn = li.querySelector(".closeSpreadNet");
+if (closeSpreadBtn) {
+  closeSpreadBtn.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    try {
+      const posId = String(t._posId || "").trim();
+      const netOpen = openNetLegByPos.get(posId);
+
+      if (!netOpen) {
+        alert("No encontré la pata SPREAD abierta para cerrar neto.");
+        return;
+      }
+
+      await closeLegFromOpen(netOpen);
+      requestScrollTop();
+      setTimeout(() => cargarTradesSafe(), 650);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo cerrar el spread neto.");
+    }
+  });
+}
+
 
       // Borrar
       li.querySelector(".del").addEventListener("click", async (ev) => {
